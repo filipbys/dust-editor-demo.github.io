@@ -4,7 +4,10 @@
 <head>
   <title>Test Dust Editor</title>
   <meta charset="utf-8" />
+
+  <!-- TODO test on iOS, maybe need https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/env env(keyboard-inset-height) to make sure this always works with the virtual keyboard -->
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+
   <meta
     name="description"
     content="Example dust programming language editor" />
@@ -82,7 +85,7 @@
     <!-- TODO define CSS properties for the editor with @property -->
   <!-- Optional: add "resizable" class name to make it resizable -->
   <dust-file-editor
-    class=""
+    class="resizable"
     data-file-name="example.txt"
     data-storage-id="0"
     data-focus-on-load="program"
@@ -93,7 +96,7 @@
       overflow: hidden;
       contain: paint;
       --border-width: 2px;
-      --border-color: color-mix(in srgb, var(--code-color) 75%, transparent);
+      --border-color: color-mix(in srgb, var(--code-color) 50%, transparent);
       display: inline-grid;
       grid-template-columns: max-content 1fr;
       grid-template-rows: 1fr max-content;
@@ -164,7 +167,7 @@
     #undo-redo {
       box-sizing: border-box;
       padding: 2px;
-      border: 1px solid currentColor;
+      border: 1px solid var(--border-color);
       border-radius: 7px;
       cursor: default;
       flex-shrink: 0;
@@ -224,6 +227,11 @@
   </div>
   <div id="contents" tabindex="-1">
     <span class="program-container">(1 + 2 - (3 * 4))
+
+"\{\}"
+
+( "There are {365 /} {[1 2 3]} {{($a = 2) ($b = 3)}} weeks in a year,"
+  ++ " and 42 * 77 is {42 * 77}" )
 
 [1 2 3 4]
 
@@ -314,12 +322,18 @@
 
 // ({foo ({bar ({baz})})})
 
-($pi = 3.1415)
-(.$area $r = pi * r^2)
-(.$circumference $r = 2 * pi * r)
-($r = 2)
-(.circumference r)
-r.circumference
+( $pi = 3.141592654 )
+( .$circumference $radius = 2 * pi * radius )
+( .$area $radius = pi * radius^2 )
+($radius = 2)
+(.circumference radius)
+radius.circumference
+
+( .$describe-circle $radius $aspect =
+  "A circle with radius {radius} has a {aspect.name} of {.aspect radius}" )
+
+(.describe-circle 5 circumference)
+(.describe-circle 5 area)
 
 ($exclamation = "!")
 ( $person =
@@ -367,7 +381,7 @@ array.-1
 array.-2
 array.-3
 array.-4
-array.5
+// array.5
 (.array-at 3)
 
 (array .at 3)
@@ -472,7 +486,10 @@ array
   </div>
   <div id="status-bar">
     <span id="selection-indicator">Line 1, Column 1</span>
-    <span id="run-status"><span title="Program run time will be measured here">00:00:00:000</span></span>
+    <span id="run-status" style="flex-shrink: 0;"><span title="Program run time will be measured here">00:00:00:000</span></span>
+    <!-- <span >
+      <span>hi</span>
+    </span> -->
   </div>
 </template></dust-file-editor>
     <script type="module">// @ts-check
@@ -517,6 +534,19 @@ const isFatalError = (error) =>
 // @ts-check
 
 
+/** @import {Err, FetchResult, ParseNumberError, UnbreakableVow, VowWithResolver, FatalError, JSONValue, JSONReviver, JSONReplacer, ParseJSON} from "./types.d.ts" */
+/** @import {FiniteNumber} from "./number-types.d.ts" */
+
+/**
+ * Returns a floating point number between negative {@link Number.MAX_VALUE} and
+ * {@link Number.MAX_VALUE}, inclusive, parsed from {@link string}, or an
+ * {@link Err} if the string does not represent such a floating point number.
+ * @param {string} string 
+ * @returns {FiniteNumber | Err<ParseNumberError>}
+ */
+const parseFloatSafe = (string) =>
+  parseNumber(string, FLOAT_REGEX, parseFloat, Number.isFinite);
+
 /**
  * Returns an integer between {@link Number.MIN_SAFE_INTEGER} and
  * {@link Number.MAX_SAFE_INTEGER}, inclusive, parsed from {@link string}, or an
@@ -545,7 +575,9 @@ const parseNumber = (string, regex, parseFn, boundsCheck) => {
   return /** @type {FiniteNumber} */(number);
 };
 
-const INT_REGEX = /^[+-]?\d+$/;
+const
+  INT_REGEX = /^[+-]?\d+$/,
+  FLOAT_REGEX = /^[+-]?\d*(\.\d+)?(e[+-]?\d+)?$/;
 
 
 /** @type {ParseJSON} See {@link ParseJSON} docs. */
@@ -582,6 +614,17 @@ const /** @type {Err<typeof PARSE_NUMBER_ERROR__INVALID_STRING>} */
 
 // @ts-check
 
+/**
+ * Returns the closest number to {@link value} that is between {@link min} and {@link max}, inclusive.
+ * @param {number} min 
+ * @param {number} value 
+ * @param {number} max 
+ * @returns {number}
+ */
+const clamp = (min, value, max) => Math.max(min, Math.min(value, max));
+
+// @ts-check
+
 /** @import { InternalState } from "./internal-state.mjs" */
 
 const specialKeyName =
@@ -597,7 +640,7 @@ const specialKeyPressed =
   specialKeyName === '⌘'
   ? (event) => event.metaKey
   : (event) => event.ctrlKey;
-  
+
 /**
  * TODO:
  * - explain why it's needed
@@ -892,6 +935,10 @@ const updateVirtualSelection = (state) => {
 
 /** @param {InternalState} state */
 const drawSelectedRange = (state) => {
+  if (!state.shadowRoot.activeElement) {
+    state.cursor.remove();
+    return;
+  }
   if (state.isMobile) {
     const { selectedRange: { start, end }, text } = state;
     updateIndicator(
@@ -925,7 +972,7 @@ const drawSelectedRange = (state) => {
   if (selectedRange.start === selectedRange.end) {
     updateIndicator(state, null, endPoint);
     highlightedRange.remove();
-    scrollCursorIntoView(state);
+    scrollCursorIntoView(state, endPoint);
     return;
   }
   const startPoint = findPoint(text, selectedRange.start);
@@ -956,49 +1003,68 @@ const drawSelectedRange = (state) => {
   if (cursor.nextSibling !== highlightedRange) {
     cursor.after(highlightedRange);
   }
-  scrollCursorIntoView(state);
+  scrollCursorIntoView(state, endPoint);
 };
 
 /**
  * 
- * @param {InternalState} state 
+ * @param {InternalState} state
+ * @param {Readonly<CursorPoint>} cursorPoint 
  */
-const scrollCursorIntoView = (state) => {
-  // TODO:
-  // - calculate the position manually: `scrollIntoView` can trigger expensive reflow
-  // - measure perf difference
-  // - make sure cursor is not under a line number
+const scrollCursorIntoView = (state, cursorPoint) => {
+  const
+    contents = state.contents,
+    left = contents.scrollLeft,
+    top = contents.scrollTop,
 
-  state.cursor.scrollIntoView({ block: "nearest", inline: "nearest" });
+    /** The `+ 1` makes sure there's at least a character-wide gap between the line numbers and the cursor. */
+    leftMax = (cursorPoint.column + 1) * state.characterWidth,
+    leftMin =
+      leftMax
+      - contents.clientWidth
+      + state.cursorWidth
+      + (state.characterWidth * (state.lineNumbers.lastChild.firstChild.length + 1)),
+    newLeft = clamp(leftMin, left, leftMax),
+    
+    topMax = cursorPoint.row * state.lineHeight,
+    topMin = topMax - contents.clientHeight + state.lineHeight,
+    newTop = clamp(topMin, top, topMax);
 
-  // Cursor is slightly shorter than the line height: make sure the line is fully in view too
-  state.lineWithCursor?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if ((left !== newLeft) || (top !== newTop)) {
+    contents.scroll(newLeft, newTop);
+  }
 };
 
 /**
  * 
  * @param {InternalState} state 
- * @param {Readonly<{row: number; column: number}> | null} start 
- * @param {Readonly<{row: number; column: number}>} end 
+ * @param {Readonly<CursorPoint> | null} start 
+ * @param {Readonly<CursorPoint>} end 
  * @returns 
  */
 const updateIndicator = (state, start, end) => {
-  if (!start) {
-    state.selectionIndicator.data = `Line ${end.row + 1}, Column ${end.column + 1}`;
-    return;
+  let newText;
+  if (start) {    
+    const
+      range = state.selectedRange,
+      selectedCount = Math.abs(range.end - range.start);
+    newText =
+      `Line ${start.row + 1}, Column ${start.column + 1} -> Line ${end.row + 1}, Column ${end.column + 1} (${selectedCount} character${(selectedCount === 1) ? "" : 's'})`;
+  } else {
+    newText = `Line ${end.row + 1}, Column ${end.column + 1}`;
   }
-  const
-    range = state.selectedRange,
-    selectedCount = Math.abs(range.end - range.start);
-  state.selectionIndicator.data =
-    `Line ${start.row + 1}, Column ${start.column + 1} -> Line ${end.row + 1}, Column ${end.column + 1} (${selectedCount} character${(selectedCount === 1) ? "" : 's'})`;
+  // IMPORTANT: set the title too in case the text doesn't fit
+  // TODO need to handle that case for mobile too!
+  state.selectionIndicator.firstChild.data = state.selectionIndicator.title = newText;
 };
+
+/** @typedef {{row: number; column: number}} CursorPoint */
 
 /**
  * 
  * @param {string} text 
  * @param {number} index 
- * @returns {{row: number; column: number}}
+ * @returns {CursorPoint}
  */
 const findPoint = (text, index) => {
   let
@@ -1847,7 +1913,7 @@ const
   /** @type {AtLeastOneOperator} */
   ADDITION_OPERATORS = Object.freeze(['+', '-']),
   /** @type {AtLeastOneOperator} */
-  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/','÷', "mod", "rem", '^']),
+  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/', '÷', "mod", "rem"]),
   /**
    * `a == b != c` is equivalent to `(a == b) and (b != c)`
    * @type {AtLeastOneOperator}
@@ -1886,7 +1952,7 @@ const COMPATIBLE_OPERATORS = {
   '÷': MULTIPLICATION_OPERATORS,
   "mod": MULTIPLICATION_OPERATORS,
   "rem": MULTIPLICATION_OPERATORS,
-  '^': MULTIPLICATION_OPERATORS,
+  '^': Object.freeze(['^']),
   "and": Object.freeze(["and"]),
   "or": Object.freeze(["or"]),
   "xor": Object.freeze(["xor"]),
@@ -2126,35 +2192,64 @@ const postProcessGroupPart = (state, gaps, nodes, groupTypeIfSingleNodeLeft) => 
         if (nodes.length === 1) {
           return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        // TODO try and deduplicate this and "return" expression
-        const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
-        switch (fromIndex) {
-          case null:
-            addError(state, nodes[1], {
-              message: `Unexpected "${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue from <loop label>).`
+        const loopLabel = nodes[1];
+        if (loopLabel.type !== "identifier") {
+          addError(state, loopLabel, {
+            message: `Expected identifier after "continue" but found "${loopLabel.type}"`
+          });
+          if (nodes.length > 2) {
+            multiAddError(state, nodes, 2, nodes.length, {
+              message: `Unexpected node after "continue <loop-label>"`
             });
-            return groupNodeUnsafe("continue_expression", gaps, nodes);
-          case (nodes.length - 1):
-            addError(state, nodes[fromIndex], {message: `Expected identifier after "from"`});
-            break;
-          default:
-            if (nodes[fromIndex + 1].type !== "identifier") {
-              addError(state, nodes[fromIndex + 1], {
-                message: `Expected identifier after "from" but found "${nodes[fromIndex + 1].type}"`
-              });
-            }
-            if ((fromIndex + 2) < nodes.length) {
-              multiAddError(state, nodes, fromIndex + 2, nodes.length, {
-                message: `Unexpected node after "from ${nodes[fromIndex + 1].text}"`
-              });
-            }
+          }
+          return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        if (fromIndex > 1) {
-          multiAddError(state, nodes, 1, fromIndex, {
-            message: `Unexpected node between "continue" and "from"`
+        if (nodes.length > 2) {
+          multiAddError(state, nodes, 2, nodes.length, {
+            message: `Unexpected node after "continue ${loopLabel.text}"`
           });
         }
         return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
+        // switch (nodes.length) {
+        //   case 1:
+        //   case 2: {
+        //   }
+        //   default:
+        //     multiAddError(state, nodes, 2, nodes.length, {
+        //       message: `A continue expression must have either one node (continue) or two (continue <loop label>)`,
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        // }
+        
+        // // TODO try and deduplicate this and "return" expression
+        // const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
+        // switch (fromIndex) {
+        //   case null:
+        //     addError(state, nodes[1], {
+        //       message: `Unexpected "${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue <loop label>).`
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        //   case (nodes.length - 1):
+        //     addError(state, nodes[fromIndex], {message: `Expected identifier after "from"`});
+        //     break;
+        //   default:
+        //     if (nodes[fromIndex + 1].type !== "identifier") {
+        //       addError(state, nodes[fromIndex + 1], {
+        //         message: `Expected identifier after "from" but found "${nodes[fromIndex + 1].type}"`
+        //       });
+        //     }
+        //     if ((fromIndex + 2) < nodes.length) {
+        //       multiAddError(state, nodes, fromIndex + 2, nodes.length, {
+        //         message: `Unexpected node after "from ${nodes[fromIndex + 1].text}"`
+        //       });
+        //     }
+        // }
+        // if (fromIndex > 1) {
+        //   multiAddError(state, nodes, 1, fromIndex, {
+        //     message: `Unexpected node between "continue" and "from"`
+        //   });
+        // }
+        // return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
       }
       case "do": {
         for (let i = nodes.length - 1; i > 0; i--) {
@@ -2600,7 +2695,7 @@ const checkFirstOrLastNode = (state, beforeOrAfter, node) => {
 
 // @ts-check
 
-/** @import {DustGap, DustCommentNode, DustGapStringWithError} from "./types.d.ts" */
+/** @import {DustGap, DustCommentNode, DustGapStringWithError, EndToken, StartToken} from "./types.d.ts" */
 
 /**
  * 
@@ -2636,6 +2731,34 @@ const appendGapNode$1 = (gap, node) => {
     return gap;
   }
   return [gap, node];
+};
+
+/**
+ * 
+ * @param {EndToken} endToken 
+ * @returns {StartToken}
+ */
+const expectedStartToken = (endToken) => {
+  switch (endToken) {
+    case ')':
+      return '(';
+    case ']':
+      return '[';
+    case '}':
+      return '{';
+    case '"':
+      return '"';
+    case '\'':
+      return '\'';
+    case '”':
+      return '“';
+    case '»':
+      return '«';
+    case '\n':
+      return "//";
+    case "*/":
+      return "/*";
+  }
 };
 
 // @ts-check
@@ -2738,11 +2861,11 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       case '»':
       case "*/": {
         moveToNextToken(state, token);
-        gap = appendGapNode$1(gap, errorGapNode(state, token, {
-          message: endBracket
-            ? `Found unmatched end token "${token}" at ${positionString(state)} (expected "${endBracket}" since the current group was opened with start token "${startBracket}" at ${positionString(state)})`
-            : `Found unmatched end token "${token}" at ${positionString(state)} (at root level)`,
-        }));
+        let message = `Found unmatched end token "${token}" at ${positionString(state)} (missing "${expectedStartToken(token)}"?)`;
+        if (endBracket) {
+          message += `: expected "${endBracket}" since the current group was opened with start token "${startBracket}" at ${positionString(state)}`;
+        }
+        gap = appendGapNode$1(gap, errorGapNode(state, token, {message}));
         continue;
       }
       case '$':
@@ -2836,7 +2959,7 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       }
     }
     const errorNode = leafNode("identifier", token);
-    addError(state, errorNode, {message: `Invalid token`});
+    addError(state, errorNode, {message: `Invalid token "${token}"`});
     gap = appendNode$1(gaps, gap, children, errorNode);
   }
   gaps.push(gap);
@@ -2953,8 +3076,15 @@ const parseCharacterLiteral = (state) => {
       length += token.length;
       continue;
     }
+    const character = state.text.slice(characterStart, state.index);
+    if (length === 0) {
+      const characterLiteral = groupNodeUnsafe("character_literal", ["''"], []);
+      checkCharacterLiteralLength(characterLiteral, length, state);
+      moveToNextToken(state, token);
+      return characterLiteral;
+    }
     const characterLiteral = groupNode("character_literal", CHARACTER_LITERAL_GAPS, [
-      (leafNode("character", state.text.slice(characterStart, state.index))),
+      leafNode("character", character),
     ]);
     checkCharacterLiteralLength(characterLiteral, length, state);
     moveToNextToken(state, token);
@@ -3288,18 +3418,12 @@ const timeoutIDs = new Map();
 /** @import { InternalState } from "./internal-state.mjs"; */
 /** @import { LineNumbers } from "./types.d.ts"; */
 
-// const LINE_COUNT_MARGIN = "--line-count-margin";
-// const LINE_COUNT_MARGIN = "--widest-line-number-width";
-//         --widest-line-number-width: ${String(program.split('\n').length).length};
-
 /**
  * @param {LineNumbers} lineNumbers
  * @param {HTMLElement} container
  * @param {number} lineCount
- * @param {InternalState} state
- * @param {(this: InternalState, event: PointerEvent) => void} onPointerDown
  */
-const updateLineNumbers = (lineNumbers, container, lineCount, state, onPointerDown) => {
+const updateLineNumbers = (lineNumbers, container, lineCount) => {
   let lineElementCount = lineNumbers.childElementCount;
   if (lineElementCount === lineCount) {
     return;
@@ -3324,12 +3448,9 @@ const updateLineNumbers = (lineNumbers, container, lineCount, state, onPointerDo
     return;
   }
 
-  /** Add the same listener to each line number element, that way on mobile, when a user taps on a line number, only that line number will flash. If the listener is added to the container, then the whole container will flash when a line number is tapped. */
-  const pointerDownFn = onPointerDown.bind(state);
   for (; lineElementCount < lineCount; lineElementCount++) {
     const element = document.createElement("div");
     element.textContent = String(lineElementCount + 1).padStart(padWidth);
-    element.addEventListener("pointerdown", pointerDownFn);
     lineNumbers.append(element);
   }
 };
@@ -3349,16 +3470,18 @@ const
  */
 const scrollToLine = function (container, lineNumbers, row, adjustment) {
   const
-    top = Math.min(
+    top = clamp(
+      0,
       (row * this.lineHeight) + adjustment, // Desired `scrollTop`
       container.scrollHeight - container.clientHeight, // Max `scrollTop` for the container (IMPORTANT: without this, clicking on a line number on one side might not flash the corresponding line number on the other side, since `scrollTo` might not be able to scroll that far)
     ),
     lineNumberElement = lineNumbers && lineNumbers.childNodes[row];
+  // console.log(lineNumberElement, `top=${top}, scrollTop=${container.scrollTop}, scrollHeight=${container.scrollHeight}, clHeight=${container.clientHeight}, row=${row}, lh=${this.lineHeight}, adj=${adjustment}`)
   if (lineNumberElement && (Math.round(top) === Math.round(container.scrollTop))) {
     temporarilyAddClass.call(FLASH_LINE_BACKGROUND, FLASH_DURATION, lineNumberElement);
     return;
   }
-  container.scrollTo({ top, behavior: this.resultsScrollBehavior });
+  container.scroll({ top, behavior: this.resultsScrollBehavior });
   if (!lineNumberElement) {
     return;
   }
@@ -4694,7 +4817,7 @@ const toggleResultsContainer = function () {
     return;
   }
   this.contents.after(this.gridResizer, this.results);
-  this.results.scrollTo(this.resultsScrollPosition);
+  this.results.scroll(this.resultsScrollPosition);
   if (!toggleButton) {
     this.runStatus.lastChild.before((toggleButton = document.createElement("button")));
     toggleButton.addEventListener("click", toggleResultsContainer.bind(this));
@@ -4725,7 +4848,7 @@ const showResult = (state, textAtStart, result) => {
   }
   setResultsText(
     state,
-    state.resultsText + `// Line ${row + 1}, Column ${column + 1} (took ${time})\n${value}\n\n`,
+    state.resultsText + `// Line ${row + 1}, Column ${column + 1} (took ${time})\n${value}\n`,
   );
 };
 
@@ -4771,12 +4894,12 @@ const updateResultsView = (state) => {
     height = state.lineHeight * lines.length;
   setPropertyIfChanged(results.style, "--program-width", `${width}px`);
   setPropertyIfChanged(results.style, "--program-height", `${height}px`);
-  updateLineNumbers(results.firstChild, results, lines.length, state, onLineNumberPointerDown);
+  updateLineNumbers(results.firstChild, results, lines.length);
   patchOutlines(results.children[1], virtualOutlines, width, height);
   patchSpans(results.lastChild, virtualSpans);
 
   if (state.autoScrollResults) { // TODO add a toolbar toggle to control this
-    results.scrollTo({ top: results.scrollHeight, behavior: state.resultsScrollBehavior });
+    results.scroll({ top: results.scrollHeight, behavior: state.resultsScrollBehavior });
   }
 };
 
@@ -4879,10 +5002,11 @@ const countNewLines = (text) => {
  * @this {InternalState}
  * @param {PointerEvent} event 
  */
-const onLineNumberPointerDown = function (event) {
+const onResultsLineNumberPointerDown = function (event) {
   if (this.results.firstChild.title !== LINE_NUMBERS_CLICKABLE_TITLE) {
     return; // program changed: can't know where to scroll to
   }
+  event.preventDefault();
   const
     resultsTop = this.results.getBoundingClientRect().top,
     clickedRow = Math.floor(
@@ -4931,22 +5055,19 @@ const ERR_TAG = "ErrorsAsValuesError";
 const err = (cause) =>
   Object.freeze([Object.freeze(cause), ERR_TAG]);
 
+/**
+ * @template E
+ * @param {Err<E>} err 
+ * @returns {E} The cause of the {@link err}.
+ */
+const errCause = ([cause]) => cause;
+
 /** @type {<T, E=unknown>(result: T | Err<E>) => result is Err<E>} */
 const isErr = (result) =>
   Array.isArray(result) && (result.length === 2) && (result[1] === ERR_TAG);
 
-/**
- * Returns {@link result} if it {@link isOk}, otherwise returns the result of
- * calling {@link fn} on its {@link errCause}.
- * @template T
- * @template FnResult
- * @template E
- * @param {T | Err<E>} result 
- * @param {(error: E) => FnResult} fn
- * @returns {T | FnResult}
- */
-const okOrElse = (result, fn) =>
-  isErr(result) ? fn(result[0]) : result;
+/** @type {<T, E>(result: T | Err<E>) => result is T} */
+const isOk = (result) => !isErr(result);
 
 // @ts-check
 
@@ -5023,16 +5144,6 @@ class InterpretError extends Error {
     super(message, options);
     this.dustStack = [{ node, fn: null }];
     this.scope = scope;
-  }
-
-  /**
-   * @param {string} message
-   * @param {{node: DustNode | null, scope: DustScope | null}} debug 
-   * @param {ErrorOptions} [options]
-   * @returns {never}
-   */
-  static throw(message, debug, options) {
-    throw new this(message, debug, options);
   }
 
   /**
@@ -5209,27 +5320,7 @@ const isLeaf = (node) => !Array.isArray(node.text);
 // @ts-check
 
 
-/** @import {DustNode} from "../parser/types.d.ts" */
-/** @import { DustFunction, DustScope, DustValue } from "./interpreter-types.d.ts" */
-
-/** @type {DustScope} */
-const rootScope = Object.create(null);
-rootScope.true = true;
-rootScope.false = false;
-
-// TODO this should be an associated function on Number rather than a global one.
-const squareRootName = "square-root";
-rootScope[squareRootName] = (number) => {
-  if (typeof number !== "number") {
-    throw new InterpretError(\`Invalid parameter for \${squareRootName}: expected one number, but got \${dustValueType(number)}}\`, { node: null, scope: rootScope });
-  }
-  const result = Math.sqrt(number);
-  if (Number.isNaN(result)) {
-    throw new InterpretError(\`Invalid parameter for \${squareRootName}: the square root of \${number} is NaN\`, { node: null, scope: rootScope });
-  }
-  return result;
-};
-rootScope[squareRootName].dustFunctionName = squareRootName;
+/** @import { DustArray, DustAssociatedFunction, DustFunction, DustRecord, DustRecordType, DustValue, DustValueType } from "./interpreter-types.d.ts" */
 
 /**
  * @type {DustFunction}
@@ -5250,147 +5341,6 @@ const dustValueType = (value) => {
 };
 // TODO: change this to something like "type-name": "type" should return a record with all the specific type information: accessors for fields, associated functions, etc
 dustValueType.dustFunctionName = "type";
-rootScope.type = dustValueType;
-
-// TODO: more builtins like log, etc
-Object.freeze(rootScope);
-
-
-// TODO: implement these as associated functions instead. Most of them just go on numbers, but the others additionally get special implementations on their associated types.
-/** @type {Record<string, DustFunction | undefined>} */
-const dustOperators = {
-  '+': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '+'));
-    }
-    return a + b;
-  },
-  // TODO!
-  // (* n) === (\\lambda x = x * n)
-  // (+ n) === (\\lambda x = x + n)
-  // (/ n) === (\\lambda x = x / n)
-  // (- n) === (\\lambda x = x - n)
-  // -n === (-1 * n)
-  // -(a + b) === (-1 * (a + b))
-  // (- (a + b)) === (\\lambda x = x - (a + b))
-  // CONFUSING, unless currying is replaced with explicit lambda shorthand:
-  // ($ * n) === (\\lambda x = x * n)
-  // ($ + n) === (\\lambda x = x + n)
-  // ($ / n) === (\\lambda x = x / n)
-  // ($ - n) === (\\lambda x = x - n)
-  // -n === (-1 * n)
-  // -(a + b) === (-1 * (a + b))
-  // ($ - (a + b)) === (\\lambda x = x - (a + b))
-  // MAYBE currying is allowed, but only for regular (non-operator) functions and only for parameters at the *end*
-  // (* n) // Error: got second parameter, but missing first parameter
-  // (n *) // Error: got first parameter, but missing second parameter
-  // (- n) // OK: equivalent to \`-n\`: \`-\` works as both a unary and binary operator
-  '-': (a, b) => {
-    if (typeof a !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '-'));
-    }
-    if (b === undefined) {
-      return -1 * a;
-    }
-    if (typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '-'));
-    }
-    return a - b;
-  },
-  '*': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '*'));
-    }
-    return a * b;
-  },
-  '/': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '/'));
-    }
-    // TODO! check for NaN!
-    return a / b;
-  },
-  '%': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '%'));
-    }
-    // TODO! check for NaN!
-    return a % b;
-  },
-  '^': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '^'));
-    }
-    return Math.pow(a, b);
-  },
-  "==": (a, b) =>
-    // TODO is === sufficient?
-    // TODO check for not enough parameters
-    a === b,
-  '≠': (a, b) =>
-    // TODO is !== sufficient?
-    // TODO check for not enough parameters
-    a !== b,
-  '<': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '<'));
-    }
-    return a < b;
-  },
-  '≤': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '≤'));
-    }
-    return a <= b;
-  },
-  '>': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '>'));
-    }
-    return a > b;
-  },
-  '≥': (a, b) => {
-    if ((typeof a !== "number") || (typeof b !== "number")) {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, '≥'));
-    }
-    return a >= b;
-  },
-  "++": (a, b) => {
-    if ((typeof a === "string") && (typeof b === "string")) {
-      return a + b;
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      return a.concat(b);
-    }
-    // TODO do both of the above cases with operator overloading
-    throw new InterpretError(\`Invalid parameters for "++": expected two strings or two arrays, but got \${dustValueType(a)} and \${dustValueType(b)}\`, { node: null, scope: rootScope });
-  },
-};
-
-dustOperators["!="] = dustOperators['≠'];
-dustOperators["<="] = dustOperators['≤'];
-dustOperators[">="] = dustOperators['≥'];
-Object.freeze(dustOperators);
-
-
-/**
- * 
- * @param {DustValue} a 
- * @param {DustValue} b 
- * @param {string} operator
- * @returns {[string, {node: DustNode | null, scope: DustScope | null}, ErrorOptions]}
- */
-const numberOperatorErrorParams = (a, b, operator) =>
-  [
-    \`Invalid parameters for "\${operator}": expected two numbers, but got \${dustValueType(a)} and \${dustValueType(b)}\`,
-    { node: null, scope: rootScope },
-    { cause: { a, b } }
-  ];
-
-// @ts-check
-
-
-/** @import { DustArray, DustAssociatedFunction, DustFunction, DustRecord, DustRecordType, DustValue, DustValueType } from "./interpreter-types.d.ts" */
 
 /**
  * @type {Map<string, DustRecordType>}
@@ -5428,14 +5378,23 @@ const number_TYPE = {
         if (at) {
           return at.call(collection, self);
         }
-        throw new InterpretError(\`"\${dustValueType(collection)}" does not support integer indexing\`, { node: null, scope: null });
+        throw new InterpretError(\`"\${dustValueType(collection)}" does not support integer offsets\`, { node: null, scope: null });
       }
       const value = collection.at(self);
       if (value === undefined) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(self, collection));
+        throw new InterpretError(...offsetOutOfBoundsErrorArgs(self, collection));
       }
       return value;
     },
+
+    rounded: (self) => Math.round(self),
+
+    ["to-fixed"]: (self, fractionDigits) => {
+      if (typeof fractionDigits !== "number") {
+        throw new InterpretError(\`Expected a number after "to-fixed" but got \${dustValueType(fractionDigits)}\`,  { node: null, scope: null })
+      }
+      return self.toFixed(fractionDigits);
+    }
   },
 };
 
@@ -5447,6 +5406,7 @@ const function_TYPE = {
   associatedFunctions: {
     __proto__: null,
     apply: (self, ...args) => self.apply(args),
+    name: (self) => self.dustFunctionName ?? self.name,
   },
 };
 
@@ -5457,6 +5417,7 @@ const method_TYPE = {
   associatedFunctions: {
     __proto__: null,
     apply: (self, ...args) => self.apply(args),
+    name: (self) => self.dustFunctionName ?? self.name,
   },
 };
 
@@ -5468,29 +5429,37 @@ const string_TYPE = {
   associatedFunctions: {
     __proto__: null,
     length: (self) => self.length,
-    at: (self, index) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    at: (self, offset) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
-      const value = self.at(index);
+      const value = self.at(offset);
       if (value === undefined) {
         return null;
       }
       return value;
     },
-    require: (self, index) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    require: (self, offset) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
-      const value = self.at(index);
+      const value = self.at(offset);
       if (value === undefined) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self));
+        throw new InterpretError(...offsetOutOfBoundsErrorArgs(offset, self));
       }
       return value;
     },
     ["to-uppercase"]: (self) => self.toUpperCase(),
   },
 };
+
+/**
+ * 
+ * @param {DustValue} a 
+ * @param {DustValue} b 
+ * @returns {number}
+ */
+const defaultComparator = (a, b) => a - b;
 
 /** @type {DustValueType<DustArray>} */
 const array_TYPE = {
@@ -5499,49 +5468,49 @@ const array_TYPE = {
   associatedFunctions: {
     __proto__: null,
     length: (self) => self.length,
-    at: (self, index) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    at: (self, offset) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
-      const value = self.at(index);
+      const value = self.at(offset);
       if (value === undefined) {
         return null;
       }
       return value;
     },
-    require: (self, index) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    require: (self, offset) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
-      const value = self.at(index);
+      const value = self.at(offset);
       if (value === undefined) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self));
+        throw new InterpretError(...offsetOutOfBoundsErrorArgs(offset, self));
       }
       return value;
     },
-    with: (self, index, element) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    with: (self, offset, element) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
       const length = self.length;
-      if (index < -length || length <= index) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self));
+      if (offset < -length || length <= offset) {
+        throw new InterpretError(...offsetOutOfBoundsErrorArgs(offset, self));
       }
-      return self.with(index, element);
+      return self.with(offset, element);
     },
-    ["set!"]: (self, index, element) => {
-      if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+    ["set!"]: (self, offset, element) => {
+      if (typeof offset !== "number") {
+        throw new InterpretError(...offsetTypeErrorArgs(offset));
       }
       const length = self.length;
-      if (index < -length || length <= index) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self));
+      if (offset < -length || length <= offset) {
+        throw new InterpretError(...offsetOutOfBoundsErrorArgs(offset, self));
       }
       // TODO: check that the type of the new element is compatible!
-      if (index < 0) {
-        self[index + length] = element;
+      if (offset < 0) {
+        self[offset + length] = element;
       } else {
-        self[index] = element;
+        self[offset] = element;
       }
       return self;
     },
@@ -5588,25 +5557,28 @@ const array_TYPE = {
       self.unshift(...elements);
       return self;
     },
+
+    sorted: (self) => self.toSorted(defaultComparator),
+    ["sort!"]: (self) => self.sort(defaultComparator),
   },
 };
 
 /**
  * 
- * @param {DustValue} index 
+ * @param {DustValue} offset 
  * @returns {[string, any, ErrorOptions]} TODO: ConstructorParameters<InterpretError> doesn't work for some reason (it's "never")
  */
-const indexTypeErrorArgs = (index) =>
-  [\`Expected index of type "number" but got "\${dustValueType(index)}"\`, { node: null, scope: null }, { cause: index }];
+const offsetTypeErrorArgs = (offset) =>
+  [\`Expected offset of type "number" but got "\${dustValueType(offset)}"\`, { node: null, scope: null }, { cause: offset }];
 
 /**
  * 
- * @param {number} index 
+ * @param {number} offset 
  * @param {{length: number}} collection 
  * @returns {[string, any, ErrorOptions]} TODO: ConstructorParameters<InterpretError> doesn't work for some reason (it's "never")
  */
-const indexOutOfBoundsErrorArgs = (index, collection) =>
-  [\`Index \${index} out of bounds of collection of length \${collection.length}\`, { node: null, scope: null }, { cause: collection }];
+const offsetOutOfBoundsErrorArgs = (offset, collection) =>
+  [\`Offset \${offset} out of bounds of collection of length \${collection.length}\`, { node: null, scope: null }, { cause: collection }];
 
 
 /** 
@@ -5621,9 +5593,40 @@ const recordWith = (self, otherRecord) => {
   if (!isRecord(otherRecord)) {
     throw new InterpretError(\`"with" requires both parameters to be records, but got "\${dustValueType(otherRecord)}"\`, { node: null, scope: null }, { cause: { self, otherRecord } });
   }
-  return { ...self, ...otherRecord, [RECORD_TYPE_KEY]: null };
+  /** @type {DustRecord} */
+  const result = {[RECORD_TYPE_KEY]: null};
+  for (const key of Object.keys(self)) {
+    if (Object.hasOwn(otherRecord, key)) {
+      continue;
+    }
+    // SAFETY: \`key\` returned by Object.keys must have a PropertyDescriptor
+    Object.defineProperty(result, key, /** @type {PropertyDescriptor} */(Object.getOwnPropertyDescriptor(self, key)));
+  }
+  for (const key of Object.keys(otherRecord)) {
+    // SAFETY: \`key\` returned by Object.keys must have a PropertyDescriptor
+    Object.defineProperty(result, key, /** @type {PropertyDescriptor} */(Object.getOwnPropertyDescriptor(otherRecord, key)));
+  }
+  return result;
 };
 recordWith.dustFunctionName = "with";
+
+/** @type {DustAssociatedFunction<DustRecord>} */
+const recordWithout = (self, fieldNames) => {
+  if (!Array.isArray(fieldNames)) {
+    throw new InterpretError(\`"without" requires the second parameter to be an array, but got "\${dustValueType(fieldNames)}"\`, { node: null, scope: null }, { cause: { self, fieldNames } });
+  }
+  /** @type {DustRecord} */
+  const result = {[RECORD_TYPE_KEY]: null};
+  for (const key of Object.keys(self)) {
+    if (fieldNames.includes(key)) {
+      continue;
+    }
+    // SAFETY: \`key\` returned by Object.keys must have a PropertyDescriptor
+    Object.defineProperty(result, key, /** @type {PropertyDescriptor} */(Object.getOwnPropertyDescriptor(self, key)));
+  }
+  return result;
+};
+recordWithout.dustFunctionName = "without";
 
 /** @type {DustAssociatedFunction<DustRecord>} */
 const recordSet = (self, otherRecord) => {
@@ -5697,7 +5700,12 @@ const getType = (value) => {
           category: "record",
           // TODO for records other than Arrays and Strings, it might make sense to store the associated functions record in the record's prototype for fast access.
           // TODO add a function "with" that returns a new record with the new values, making sure to update the typeKey value if needed!
-          associatedFunctions: { __proto__: null, with: recordWith, ["set!"]: recordSet },
+          associatedFunctions: {
+            __proto__: null,
+            with: recordWith,
+            without: recordWithout,
+            ["set!"]: recordSet,
+           },
           fieldTypes,
         };
         for (const [fieldName, fieldType] of fieldTypeEntries) {
@@ -5789,6 +5797,348 @@ const makeAssociatedFunction = (fieldName, fieldType) => {
 //       return /** @type {DustValueType<T>} */(t);
 //   }
 // };
+
+// @ts-check
+
+
+/** @import {DustNode, DustOperator} from "../parser/types.d.ts" */
+/** @import { DustFunction, DustRecord, DustRecordType, DustScope, DustValue } from "./interpreter-types.d.ts" */
+
+/** @type {DustScope} */
+const rootScope = Object.create(null);
+rootScope.true = true;
+rootScope.false = false;
+
+// TODO! include line number! May need it to be a special keyword. But it would be nice for any function to be able to print a stack trace possibly starting from its caller rather than itself.
+rootScope.console = {
+  [RECORD_TYPE_KEY]: null,
+  debug: (value) => {
+    console.debug(value);
+    return value;
+  },
+  log: (value) => {
+    console.log(value);
+    return value;
+  },
+  warn: (value) => {
+    console.warn(value);
+    return value;
+  },
+  error: (value) => {
+    console.error(value);
+    return value;
+  },
+};
+
+// TODO this should be an associated function on Number rather than a global one.
+const squareRootName = "square-root";
+rootScope[squareRootName] = (number) => {
+  if (typeof number !== "number") {
+    throw new InterpretError(\`Invalid parameter for \${squareRootName}: expected one number, but got \${dustValueType(number)}}\`, { node: null, scope: rootScope });
+  }
+  const result = Math.sqrt(number);
+  if (Number.isNaN(result)) {
+    throw new InterpretError(\`Invalid parameter for \${squareRootName}: the square root of \${number} is NaN\`, { node: null, scope: rootScope });
+  }
+  return result;
+};
+rootScope[squareRootName].dustFunctionName = squareRootName;
+
+// TODO: needs to be able to run in the worker thread... So needs to communicate back to main thread somehow
+// if ("document" in self) {
+//   /** @typedef {{createElement(name: string): HTMLElement}} HTMLDocument */
+//   /**
+//    * @typedef {{
+//    *   setAttribute(name: string, value: string): void;
+//    *   append(...children: (string | HTMLElement)[]): void;
+//    * }} HTMLElement 
+//    */
+
+//   const document = /** @type {HTMLDocument} */(self.document);
+
+
+//   /**
+//    * 
+//    * @param {DustValue} name
+//    * @returns {DustRecord} 
+//    */
+//   rootScope.html = (name) => {
+//     if (typeof name !== "string") {
+//       throw new InterpretError(\`Invalid parameter for html: expected an html element name (a string), but got \${dustValueType(name)}\`, { node: null, scope: rootScope });
+//     }
+//     const element = document.createElement(name);
+//     return {
+//       element,
+//       [RECORD_TYPE_KEY]: HTMLBuilderType,
+//     }
+//   };
+  
+//   /** @type {DustRecordType} */
+//   const HTMLBuilderType = {
+//     name: "HTMLBuilder",
+//     category: "record",
+//     associatedFunctions: {
+//       __proto__: null,
+//       element: (self) => self.element,
+//       ["set!"]: (self, name, value) => {
+//         if ((typeof name !== "string") || (typeof value !== "string")) {
+//           throw new InterpretError(\`HTMLBuilder.set! expects name and value parameters to be strings, but got \${dustValueType(name)} and \${dustValueType(value)}\`, { node: null, scope: rootScope });
+//         }
+//         /** @type {HTMLElement} */(self.element).setAttribute(name, value);
+//         return self;
+//       },
+//       ["append!"]: (self, children) => {
+//         if (!Array.isArray(children)) {
+//           throw new InterpretError(\`HTMLBuilder.append! expects an array, but got \${dustValueType(children)}\`, { node: null, scope: rootScope });
+//         }
+//         /** @type {(string | HTMLElement)[]} */
+//         const childNodes = children.map((child, i) => {
+//           if (typeof child === "string") {
+//             return child;
+//           }
+//           if ((typeof child !== "object") || (child === null) || Array.isArray(child)) {
+//             // TODO better error message
+//             throw new InterpretError(\`HTMLBuilder.append! expects an array of (string | HTMLBuilder), but got \${dustValueType(child)} at index \${i}\`, { node: null, scope: rootScope });
+//           }
+//           return /** @type {HTMLElement} */(child.element);
+//         });
+//         const element = /** @type {HTMLElement} */(self.element);
+//         element.append.apply(element, childNodes);
+//         return self;
+//       },
+//     },
+//     fieldTypes: { },
+//   };
+// }
+
+// const globalFn = function() {
+
+// };
+
+// for (const fnName of ["length", "at"]) {
+//   /** @type {DustFunction} */
+//   const globalFn = (value) => {
+//     const lengthFn = getType(value).associatedFunctions[fnName];
+//     if (!lengthFn) {
+//       throw new InterpretError(\`Type "\${getType(value).name}" has no associated function "length"\`, {node: null, scope: rootScope});
+//     }
+//     return lengthFn(value);
+//   };
+//   globalFn.dustFunctionName = fnName;
+//   rootScope[fnName] = globalFn;
+// }
+
+rootScope.length = (value) => {
+  const lengthFn = getType(value).associatedFunctions.length;
+  if (!lengthFn) {
+    throw new InterpretError(\`Type "\${getType(value).name}" has no associated function "length"\`, {node: null, scope: rootScope});
+  }
+  return lengthFn(value);
+};
+
+rootScope.at = (value, index) => {
+  const atFn = getType(value).associatedFunctions.at;
+  if (!atFn) {
+    throw new InterpretError(\`Type "\${getType(value).name}" has no associated function "at"\`, {node: null, scope: rootScope});
+  }
+  return atFn(value, index);
+};
+
+rootScope.type = dustValueType;
+
+// TODO: more builtins like log, etc
+Object.freeze(rootScope);
+
+
+/** @type {DustFunction} */
+const divide = (a, b) => {
+  if ((typeof a !== "number") || (typeof b !== "number")) {
+    throw new InterpretError(...numberOperatorErrorParams(a, b, '/'));
+  }
+  // TODO! check for NaN!
+  return a / b;
+};
+
+/** @type {DustFunction} */
+const notEqual = (a, b) =>
+  // TODO is !== sufficient?
+  // TODO check for not enough parameters
+  a !== b;
+
+/** @type {DustFunction} */
+const lte = (a, b) => {
+  if ((typeof a !== "number") || (typeof b !== "number")) {
+    throw new InterpretError(...numberOperatorErrorParams(a, b, '≤'));
+  }
+  return a <= b;
+};
+
+/** @type {DustFunction} */
+const gte = (a, b) => {
+  if ((typeof a !== "number") || (typeof b !== "number")) {
+    throw new InterpretError(...numberOperatorErrorParams(a, b, '≥'));
+  }
+  return a >= b;
+};
+
+// TODO: implement these as associated functions instead. Most of them just go on numbers, but the others additionally get special implementations on their associated types.
+/** @type {Record<DustOperator, DustFunction>} */
+const dustOperators = {
+  "and": (a, b) => {
+    if ((typeof a !== "boolean") || (typeof b !== "boolean")) {
+      throw new InterpretError(...booleanOperatorErrorParams(a, b, "and"));
+    }
+    return a && b;
+  },
+  "or": (a, b) => {
+    if ((typeof a !== "boolean") || (typeof b !== "boolean")) {
+      throw new InterpretError(...booleanOperatorErrorParams(a, b, "or"));
+    }
+    return a || b;
+  },
+  "xor": (a, b) => {
+    if ((typeof a !== "boolean") || (typeof b !== "boolean")) {
+      throw new InterpretError(...booleanOperatorErrorParams(a, b, "xor"));
+    }
+    return a != b;
+  },
+  "not": (value) => {
+    if (typeof value !== "boolean") {
+      // TODO operator overloading
+      throw new InterpretError(\`Invalid parameter for "not": expected a boolean, but got \${dustValueType(value)}\`, { node: null, scope: rootScope });
+    }
+    return !value;
+  },
+  '+': (a, b) => {
+    if ((typeof a !== "number") || (typeof b !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '+'));
+    }
+    return a + b;
+  },
+  // TODO!
+  // (* n) === (\\lambda x = x * n)
+  // (+ n) === (\\lambda x = x + n)
+  // (/ n) === (\\lambda x = x / n)
+  // (- n) === (\\lambda x = x - n)
+  // -n === (-1 * n)
+  // -(a + b) === (-1 * (a + b))
+  // (- (a + b)) === (\\lambda x = x - (a + b))
+  // CONFUSING, unless currying is replaced with explicit lambda shorthand:
+  // ($ * n) === (\\lambda x = x * n)
+  // ($ + n) === (\\lambda x = x + n)
+  // ($ / n) === (\\lambda x = x / n)
+  // ($ - n) === (\\lambda x = x - n)
+  // -n === (-1 * n)
+  // -(a + b) === (-1 * (a + b))
+  // ($ - (a + b)) === (\\lambda x = x - (a + b))
+  // MAYBE currying is allowed, but only for regular (non-operator) functions and only for parameters at the *end*
+  // (* n) // Error: got second parameter, but missing first parameter
+  // (n *) // Error: got first parameter, but missing second parameter
+  // (- n) // OK: equivalent to \`-n\`: \`-\` works as both a unary and binary operator
+  '-': (a, b) => {
+    if (typeof a !== "number") {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '-'));
+    }
+    if (b === undefined) {
+      return -1 * a;
+    }
+    if (typeof b !== "number") {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '-'));
+    }
+    return a - b;
+  },
+  '*': (a, b) => {
+    if ((typeof a !== "number") || (typeof b !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '*'));
+    }
+    return a * b;
+  },
+  '/': divide,
+  '÷': divide,
+  "rem": (n, d) => {
+    if ((typeof n !== "number") || (typeof d !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(n, d, "rem"));
+    }
+    // TODO! check for NaN!
+    return n % d;
+  },
+  "mod": (n, d) => {
+    if ((typeof n !== "number") || (typeof d !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(n, d, "mod"));
+    }
+    // TODO! check for NaN!
+    return ((n % d) + d) % d;
+  },
+  '^': (a, b) => {
+    if ((typeof a !== "number") || (typeof b !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '^'));
+    }
+    return Math.pow(a, b);
+  },
+  "==": (a, b) =>
+    // TODO is === sufficient?
+    // TODO check for not enough parameters
+    a === b,
+  '≠': notEqual,
+  "!=": notEqual,
+  '<': (a, b) => {
+    if ((typeof a !== "number") || (typeof b !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '<'));
+    }
+    return a < b;
+  },
+  '≤': lte,
+  "<=": lte,
+  '>': (a, b) => {
+    if ((typeof a !== "number") || (typeof b !== "number")) {
+      throw new InterpretError(...numberOperatorErrorParams(a, b, '>'));
+    }
+    return a > b;
+  },
+  '≥': gte,
+  ">=": gte,
+  "++": (a, b) => {
+    if ((typeof a === "string") && (typeof b === "string")) {
+      return a + b;
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.concat(b);
+    }
+    // TODO do both of the above cases with operator overloading
+    throw new InterpretError(\`Invalid parameters for "++": expected two strings or two arrays, but got \${dustValueType(a)} and \${dustValueType(b)}\`, { node: null, scope: rootScope });
+  },
+};
+
+Object.freeze(dustOperators);
+
+
+/**
+ * 
+ * @param {DustValue} a 
+ * @param {DustValue} b 
+ * @param {DustOperator} operator
+ * @returns {[string, {node: DustNode | null, scope: DustScope | null}, ErrorOptions]}
+ */
+const booleanOperatorErrorParams = (a, b, operator) =>
+  [
+    \`Invalid parameters for "\${operator}": expected two booleans, but got \${dustValueType(a)} and \${dustValueType(b)}\`,
+    { node: null, scope: rootScope },
+    { cause: { a, b } }
+  ];
+
+/**
+ * 
+ * @param {DustValue} a 
+ * @param {DustValue} b 
+ * @param {DustOperator} operator
+ * @returns {[string, {node: DustNode | null, scope: DustScope | null}, ErrorOptions]}
+ */
+const numberOperatorErrorParams = (a, b, operator) =>
+  [
+    \`Invalid parameters for "\${operator}": expected two numbers, but got \${dustValueType(a)} and \${dustValueType(b)}\`,
+    { node: null, scope: rootScope },
+    { cause: { a, b } }
+  ];
 
 // @ts-check
 
@@ -6163,6 +6513,121 @@ const findPositionInternal = (searchNode, currentGroup, position) => {
 // @ts-check
 
 
+/** @import { DustRecord, DustValue } from "./interpreter-types" */
+
+const
+  INDENTATION_STEP = "  ",
+  LINE_LENGTH_LIMIT = 80;
+
+/**
+ * 
+ * @this {string} indentation
+ * @param {DustValue} value 
+ * @returns {string}
+ */
+const dustValueToStringIndented = function (value) {
+  let indentation = this;
+  switch (typeof value) {
+    case "boolean":
+      return String(value);
+    case "number": {
+      const
+        result = String(value),
+        exponentStart = result.indexOf('e');
+      if (exponentStart === -1) {
+        return result;
+      }
+      return \`(\${result.slice(0, exponentStart)} * 10^\${
+        result.slice(exponentStart + ((result[exponentStart + 1] === '+') ? 2 : 1))
+      })\`;
+    }
+    case "string":
+      if (!value.includes('\\n')) {
+        return \`“\${value}”\`;
+      }
+      return \`“\${value.split('\\n').join("\\n " + indentation)}”\`;
+    case "function": {
+      if (!value.sourceCode) {
+        return \`(/* function “\${value.dustFunctionName ?? value.name}” (source code not available) */)\`;
+      }
+      const source = nodeToString(value.sourceCode);
+      if (!source.includes('\\n')) {
+        return source;//\`(/* \${source} */)\`;
+      }
+      // TODO! account for existing indentation: remove/adjust existing indentation gaps
+      return source.split('\\n').join('\\n' + indentation + INDENTATION_STEP);
+    }
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    indentation += INDENTATION_STEP;
+    const values = value.map(dustValueToStringIndented.bind(indentation));
+    if (values.some(includesNewLine)) {
+      return \`[ \${values.join('\\n' + indentation)} ]\`;
+    }
+    const result = \`[\${values.join(' ')}]\`;
+    if (result.length <= LINE_LENGTH_LIMIT) {
+      return result;
+    }
+    return \`[ \${values.join('\\n' + indentation)} ]\`;
+  }  
+  const entries = Object.entries(value).map(recordEntryToString.bind(indentation, value));
+  indentation += INDENTATION_STEP;
+  if (entries.some(includesNewLine)) {
+    return \`{ \${entries.join('\\n' + indentation)} }\`;
+  }
+  const result = \`{\${entries.join(' ')}}\`;
+  if (result.length <= 80) {
+    return result;
+  }
+  return \`{ \${entries.join('\\n' + indentation)} }\`;
+};
+
+const dustValueToString = dustValueToStringIndented.bind("");
+
+/**
+ * @this {string} indentation
+ * @param {DustRecord} record
+ * @param {[key: string, value: DustValue]} entry 
+ */
+const recordEntryToString = function (record, [key, value]) {
+  const
+    indentation = this,
+    valueString = dustValueToStringIndented.call(indentation, value);
+  if (
+    (typeof value === "function") &&
+    value.sourceCode &&
+    (definitionName(value.sourceCode) === key)
+  ) {
+    return valueString;
+  }
+  if (Object.getOwnPropertyDescriptor(record, key)?.writable) {
+    key = "var $" + key;
+  } else {
+    key = '$' + key;
+  }
+  if (valueString.includes('\\n')) {
+    return \`( \${key} =\\n\${indentation}\${valueString} )\`;
+  }
+  const result = \`( \${key} = \${valueString} )\`;
+  if (result.length <= LINE_LENGTH_LIMIT) {
+    return result;
+  }
+  return \`( \${key} =\\n\${indentation}\${valueString} )\`;
+};
+
+/**
+ * 
+ * @param {string} string 
+ * @returns {boolean}
+ */
+const includesNewLine = (string) => string.includes('\\n');
+
+// @ts-check
+
+
 /** @import { DustGroupNode, DustNode, DustLeafNode, StringStartToken, StringEndToken } from "../parser/types.d.ts" */
 
 /** @import { DustArray, DustControlFlow, DustFunction, DustRecord, DustScope, DustValue, InterpretCrash, InterpretResult } from "./interpreter-types.d.ts" */
@@ -6246,7 +6711,7 @@ const stackEntryToString = (fileName, program, { node, fn }) => {
   const fnName = fn ? (fn.dustFunctionName ?? fn.name) : \`\${fileName}:root\`;
   if (node) {
     const { row, column } = findPosition(node, program);
-    return \`at \${fileName}:\${row + 1}:\${column + 1} in \${fnName}\`;
+    return \`at \${fileName}:\${row + 1}:\${column + 1}\${fn ? \` in \${fnName}\` : ""}\`;
   } else {
     return \`in built-in function \${fnName}\`
   }
@@ -6274,22 +6739,32 @@ const interpret = (node, scope, definitionName, shouldStop) => {
       throw new InterpretError(\`Bug: unexpected "\${node.type}" node\`, { node, scope });
     case "program":
       throw new InterpretError(\`Bug: unexpected "program" node that is not a root\`, { node, scope });
-    case "integer_literal":
-      return okOrElse(
-        // TODO: we actually want a more specific integer type based on the provided precision
-        parseIntSafe(node.text),
-        (error) => {
-          throw new InterpretError(\`"\${node.text}" is not a valid JS integer\`, { node, scope }, { cause: error });
-        },
-      );
-    case "decimal_literal":
-      return okOrElse(
-        // TODO: we actually want a more specific fixed-point type based on the provided precision
-        parseFloatSafe(node.text),
-        (error) => {
-          throw new InterpretError(\`"\${node.text}" is not a valid JS float\`, { node, scope }, { cause: error });
-        },
-      );
+    case "integer_literal": {
+      const result = parseIntSafe(node.text);
+      if (isOk(result)) {
+        return result;
+      }
+      let message;
+      if (errCause(result) === PARSE_NUMBER_ERROR__OUT_OF_BOUNDS) {
+        message = \`"\${node.text}" is not between \${Number.MIN_SAFE_INTEGER} and \${Number.MAX_SAFE_INTEGER} (inclusive)\`;
+      } else {
+        message = \`"\${node.text}" is not a valid integer literal\`;
+      }
+      throw new InterpretError(message, { node, scope });
+    }
+    case "decimal_literal": {
+      const result = parseFloatSafe(node.text);
+      if (isOk(result)) {
+        return result;
+      }
+      let message;
+      if (errCause(result) === PARSE_NUMBER_ERROR__OUT_OF_BOUNDS) {
+        message = \`"\${node.text}" is not finite\`;
+      } else {
+        message = \`"\${node.text}" is not a valid floating point literal\`;
+      }
+      throw new InterpretError(message, { node, scope });
+    }
     case "identifier": {
       const value = scope[node.text];
       if (value === undefined) {
@@ -6580,8 +7055,7 @@ const interpretFunctionCall = (node, scope, shouldStop) => {
         // TODO: should raise an error for operators if the operator is not between its arguments. Currently (< 1 2), (1 2 <=), etc, work unexpectedly
         // TODO! special case: (a == b != c) should not be valid syntax (it is evaluated and then crashes)
         // TODO! special case: (a < b <= c) is not ((a < b) <= c), which would crash, but rather ((a < b) and (b < c))
-        fn = dustOperators[child.text] ??
-          InterpretError.throw(\`operator "\${child.text}" not yet implemented\`, { node: child, scope });
+        fn = dustOperators[child.text];
         break;
       case "function_called": {
         const fnNode = child.children[1];
@@ -6626,7 +7100,6 @@ const interpretFunctionCall = (node, scope, shouldStop) => {
     if (parameters.length === 0) {
       return fn;
     }
-    // debugger;
     if (fn !== dustOperators['-']) {
       /** @type {DustFunction} */
       const partiallyAppliedFunction = fn.bind(null, ...parameters);
@@ -6768,7 +7241,6 @@ const interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) =
           }
           // @ts-expect-error: may fall through to error case
           case "keyword":
-            // TODO test what happens if I write \`(λ $x .$fn $y = x + y)\`
             if (child.text === ANONYMOUS_FUNCTION_NAME) {
               fnName = ANONYMOUS_FUNCTION_NAME;
               continue;
@@ -6808,7 +7280,8 @@ const interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) =
       }
       // TODO what happens if I put an anonymous function in a record or "in" expression, like this?
       // {(λ $x = x + 1)}
-      // ((λ $x = x + 1) in foo)
+      // ((λ $x = x + 1) in 42)
+      // Answer: it unexpectly works: the first one evaluates to {} and the second to 42
       // TODO parser should probably catch this so the interpreter/compiler doesn't need to worry about it.
       return dustFunction;
     }
@@ -6931,14 +7404,19 @@ const interpretString = (node, scope, startQuote, endQuote, shouldStop) => {
         break;
       case "function_call":
       case "parenthesized_value": {
-        const interpolatedValue = interpret(childNode, scope, null, shouldStop);
+        let interpolatedValue = interpret(childNode, scope, null, shouldStop);
         if (isControlFlow(interpolatedValue)) {
           return interpolatedValue;
         }
+        if (typeof interpolatedValue !== "string") {
+          interpolatedValue = dustValueToString(interpolatedValue);
+        }
         // TODO! look up an associated function like "to-string" and error if there isn't one
-        result += interpolatedValue;
+        result += interpolatedValue.replaceAll('{', "\\\\{").replaceAll('}', "\\\\}");
         break;
       }
+      // “There are (/* function “"divide" (partially applied)” (source code not available) */) [1 2 3] \\{\\} weeks in a year, and 42 * 77 is 3234”
+
       // TODO:
       // case "escape_sequence": {
       //   result += fullText.slice(nextCharacterStartIndex, childNode.startIndex - firstCharacterGlobalIndex);
@@ -7667,7 +8145,7 @@ const
   /** @type {AtLeastOneOperator} */
   ADDITION_OPERATORS = Object.freeze(['+', '-']),
   /** @type {AtLeastOneOperator} */
-  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/','÷', "mod", "rem", '^']),
+  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/', '÷', "mod", "rem"]),
   /**
    * \`a == b != c\` is equivalent to \`(a == b) and (b != c)\`
    * @type {AtLeastOneOperator}
@@ -7706,7 +8184,7 @@ const COMPATIBLE_OPERATORS = {
   '÷': MULTIPLICATION_OPERATORS,
   "mod": MULTIPLICATION_OPERATORS,
   "rem": MULTIPLICATION_OPERATORS,
-  '^': MULTIPLICATION_OPERATORS,
+  '^': Object.freeze(['^']),
   "and": Object.freeze(["and"]),
   "or": Object.freeze(["or"]),
   "xor": Object.freeze(["xor"]),
@@ -7946,35 +8424,64 @@ const postProcessGroupPart = (state, gaps, nodes, groupTypeIfSingleNodeLeft) => 
         if (nodes.length === 1) {
           return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        // TODO try and deduplicate this and "return" expression
-        const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
-        switch (fromIndex) {
-          case null:
-            addError(state, nodes[1], {
-              message: \`Unexpected "\${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue from <loop label>).\`
+        const loopLabel = nodes[1];
+        if (loopLabel.type !== "identifier") {
+          addError(state, loopLabel, {
+            message: \`Expected identifier after "continue" but found "\${loopLabel.type}"\`
+          });
+          if (nodes.length > 2) {
+            multiAddError(state, nodes, 2, nodes.length, {
+              message: \`Unexpected node after "continue <loop-label>"\`
             });
-            return groupNodeUnsafe("continue_expression", gaps, nodes);
-          case (nodes.length - 1):
-            addError(state, nodes[fromIndex], {message: \`Expected identifier after "from"\`});
-            break;
-          default:
-            if (nodes[fromIndex + 1].type !== "identifier") {
-              addError(state, nodes[fromIndex + 1], {
-                message: \`Expected identifier after "from" but found "\${nodes[fromIndex + 1].type}"\`
-              });
-            }
-            if ((fromIndex + 2) < nodes.length) {
-              multiAddError(state, nodes, fromIndex + 2, nodes.length, {
-                message: \`Unexpected node after "from \${nodes[fromIndex + 1].text}"\`
-              });
-            }
+          }
+          return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        if (fromIndex > 1) {
-          multiAddError(state, nodes, 1, fromIndex, {
-            message: \`Unexpected node between "continue" and "from"\`
+        if (nodes.length > 2) {
+          multiAddError(state, nodes, 2, nodes.length, {
+            message: \`Unexpected node after "continue \${loopLabel.text}"\`
           });
         }
         return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
+        // switch (nodes.length) {
+        //   case 1:
+        //   case 2: {
+        //   }
+        //   default:
+        //     multiAddError(state, nodes, 2, nodes.length, {
+        //       message: \`A continue expression must have either one node (continue) or two (continue <loop label>)\`,
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        // }
+        
+        // // TODO try and deduplicate this and "return" expression
+        // const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
+        // switch (fromIndex) {
+        //   case null:
+        //     addError(state, nodes[1], {
+        //       message: \`Unexpected "\${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue <loop label>).\`
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        //   case (nodes.length - 1):
+        //     addError(state, nodes[fromIndex], {message: \`Expected identifier after "from"\`});
+        //     break;
+        //   default:
+        //     if (nodes[fromIndex + 1].type !== "identifier") {
+        //       addError(state, nodes[fromIndex + 1], {
+        //         message: \`Expected identifier after "from" but found "\${nodes[fromIndex + 1].type}"\`
+        //       });
+        //     }
+        //     if ((fromIndex + 2) < nodes.length) {
+        //       multiAddError(state, nodes, fromIndex + 2, nodes.length, {
+        //         message: \`Unexpected node after "from \${nodes[fromIndex + 1].text}"\`
+        //       });
+        //     }
+        // }
+        // if (fromIndex > 1) {
+        //   multiAddError(state, nodes, 1, fromIndex, {
+        //     message: \`Unexpected node between "continue" and "from"\`
+        //   });
+        // }
+        // return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
       }
       case "do": {
         for (let i = nodes.length - 1; i > 0; i--) {
@@ -8420,7 +8927,7 @@ const checkFirstOrLastNode = (state, beforeOrAfter, node) => {
 
 // @ts-check
 
-/** @import {DustGap, DustCommentNode, DustGapStringWithError} from "./types.d.ts" */
+/** @import {DustGap, DustCommentNode, DustGapStringWithError, EndToken, StartToken} from "./types.d.ts" */
 
 /**
  * 
@@ -8456,6 +8963,34 @@ const appendGapNode = (gap, node) => {
     return gap;
   }
   return [gap, node];
+};
+
+/**
+ * 
+ * @param {EndToken} endToken 
+ * @returns {StartToken}
+ */
+const expectedStartToken = (endToken) => {
+  switch (endToken) {
+    case ')':
+      return '(';
+    case ']':
+      return '[';
+    case '}':
+      return '{';
+    case '"':
+      return '"';
+    case '\\'':
+      return '\\'';
+    case '”':
+      return '“';
+    case '»':
+      return '«';
+    case '\\n':
+      return "//";
+    case "*/":
+      return "/*";
+  }
 };
 
 // @ts-check
@@ -8558,11 +9093,11 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       case '»':
       case "*/": {
         moveToNextToken(state, token);
-        gap = appendGapNode(gap, errorGapNode(state, token, {
-          message: endBracket
-            ? \`Found unmatched end token "\${token}" at \${positionString(state)} (expected "\${endBracket}" since the current group was opened with start token "\${startBracket}" at \${positionString(state)})\`
-            : \`Found unmatched end token "\${token}" at \${positionString(state)} (at root level)\`,
-        }));
+        let message = \`Found unmatched end token "\${token}" at \${positionString(state)} (missing "\${expectedStartToken(token)}"?)\`;
+        if (endBracket) {
+          message += \`: expected "\${endBracket}" since the current group was opened with start token "\${startBracket}" at \${positionString(state)}\`;
+        }
+        gap = appendGapNode(gap, errorGapNode(state, token, {message}));
         continue;
       }
       case '$':
@@ -8656,7 +9191,7 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       }
     }
     const errorNode = leafNode("identifier", token);
-    addError(state, errorNode, {message: \`Invalid token\`});
+    addError(state, errorNode, {message: \`Invalid token "\${token}"\`});
     gap = appendNode(gaps, gap, children, errorNode);
   }
   gaps.push(gap);
@@ -8773,8 +9308,15 @@ const parseCharacterLiteral = (state) => {
       length += token.length;
       continue;
     }
+    const character = state.text.slice(characterStart, state.index);
+    if (length === 0) {
+      const characterLiteral = groupNodeUnsafe("character_literal", ["''"], []);
+      checkCharacterLiteralLength(characterLiteral, length, state);
+      moveToNextToken(state, token);
+      return characterLiteral;
+    }
     const characterLiteral = groupNode("character_literal", CHARACTER_LITERAL_GAPS, [
-      (leafNode("character", state.text.slice(characterStart, state.index))),
+      leafNode("character", character),
     ]);
     checkCharacterLiteralLength(characterLiteral, length, state);
     moveToNextToken(state, token);
@@ -8809,119 +9351,6 @@ const CHARACTER_LITERAL_GAPS = Object.freeze(["'", "'"]);
 // @ts-check
 
 
-/** @import { DustRecord, DustValue } from "../../interpreter/interpreter-types.d.ts" */
-
-const
-  INDENTATION_STEP = "  ",
-  LINE_LENGTH_LIMIT = 80;
-
-/**
- * 
- * @this {string} indentation
- * @param {DustValue} value 
- * @returns {string}
- */
-const resultToDustString = function (value) {
-  let indentation = this;
-  switch (typeof value) {
-    case "boolean":
-      return String(value);
-    case "number": {
-      const
-        result = String(value),
-        exponentStart = result.indexOf('e');
-      if (exponentStart === -1) {
-        return result;
-      }
-      return \`(\${result.slice(0, exponentStart)} * 10^\${
-        result.slice(exponentStart + ((result[exponentStart + 1] === '+') ? 2 : 1))
-      })\`;
-    }
-    case "string":
-      if (!value.includes('\\n')) {
-        return \`“\${value}”\`;
-      }
-      return \`“\${value.split('\\n').join("\\n " + indentation)}”\`;
-    case "function": {
-      if (!value.sourceCode) {
-        return \`(/* function “\${value.dustFunctionName ?? value.name}” (source code not available) */)\`;
-      }
-      const source = nodeToString(value.sourceCode);
-      if (!source.includes('\\n')) {
-        return source;//\`(/* \${source} */)\`;
-      }
-      // TODO! account for existing indentation: remove/adjust existing indentation gaps
-      return source.split('\\n').join('\\n' + indentation + INDENTATION_STEP);
-    }
-  }
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    indentation += INDENTATION_STEP;
-    const values = value.map(resultToDustString.bind(indentation));
-    if (values.some(includesNewLine)) {
-      return \`[ \${values.join('\\n' + indentation)} ]\`;
-    }
-    const result = \`[\${values.join(' ')}]\`;
-    if (result.length <= LINE_LENGTH_LIMIT) {
-      return result;
-    }
-    return \`[ \${values.join('\\n' + indentation)} ]\`;
-  }  
-  const entries = Object.entries(value).map(recordEntryToString.bind(indentation, value));
-  indentation += INDENTATION_STEP;
-  if (entries.some(includesNewLine)) {
-    return \`{ \${entries.join('\\n' + indentation)} }\`;
-  }
-  const result = \`{\${entries.join(' ')}}\`;
-  if (result.length <= 80) {
-    return result;
-  }
-  return \`{ \${entries.join('\\n' + indentation)} }\`;
-};
-
-/**
- * @this {string} indentation
- * @param {DustRecord} record
- * @param {[key: string, value: DustValue]} entry 
- */
-const recordEntryToString = function (record, [key, value]) {
-  const
-    indentation = this,
-    valueString = resultToDustString.call(indentation, value);
-  if (
-    (typeof value === "function") &&
-    value.sourceCode &&
-    (definitionName(value.sourceCode) === key)
-  ) {
-    return valueString;
-  }
-  if (Object.getOwnPropertyDescriptor(record, key)?.writable) {
-    key = "var $" + key;
-  } else {
-    key = '$' + key;
-  }
-  if (valueString.includes('\\n')) {
-    return \`( \${key} =\\n\${indentation}\${valueString} )\`;
-  }
-  const result = \`( \${key} = \${valueString} )\`;
-  if (result.length <= LINE_LENGTH_LIMIT) {
-    return result;
-  }
-  return \`( \${key} =\\n\${indentation}\${valueString} )\`;
-};
-
-/**
- * 
- * @param {string} string 
- * @returns {boolean}
- */
-const includesNewLine = (string) => string.includes('\\n');
-
-// @ts-check
-
-
 /** @import { WorkerRunnerMessage, WorkerRunnerResponse } from "./types" */
 
 self.onmessage = (/** @type {MessageEvent<WorkerRunnerMessage>} */ message) => {
@@ -8949,7 +9378,7 @@ self.onmessage = (/** @type {MessageEvent<WorkerRunnerMessage>} */ message) => {
         respond({
           type: "result",
           data: {
-            value: resultToDustString.call("", result.value),
+            value: dustValueToString(result.value),
             row: result.row,
             column: result.column,
             performance: result.performance,
@@ -8978,6 +9407,8 @@ const respond = (response) => {
   // console.log(\`\${new Date().toISOString()} respond\${response.type === "result" ? \` line=\${response.data.row + 1} value=\${response.data.value}\` : ""}\`, response);
   if (response.data instanceof Error) {
     console.error(response.type, response.data);
+  } else if (response.type === "crash in the program") {
+    console.warn(\`Crash in the program at line \${response.data.row + 1}, column \${response.data.column + 1}\`, response.data.error, \`\\ncaused by:\\n\`, response.data.error.cause);
   }
   self.postMessage(response);
 };
@@ -10027,7 +10458,7 @@ const
   /** @type {AtLeastOneOperator} */
   ADDITION_OPERATORS = Object.freeze(['+', '-']),
   /** @type {AtLeastOneOperator} */
-  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/','÷', "mod", "rem", '^']),
+  MULTIPLICATION_OPERATORS = Object.freeze(['*', '/', '÷', "mod", "rem"]),
   /**
    * \`a == b != c\` is equivalent to \`(a == b) and (b != c)\`
    * @type {AtLeastOneOperator}
@@ -10066,7 +10497,7 @@ const COMPATIBLE_OPERATORS = {
   '÷': MULTIPLICATION_OPERATORS,
   "mod": MULTIPLICATION_OPERATORS,
   "rem": MULTIPLICATION_OPERATORS,
-  '^': MULTIPLICATION_OPERATORS,
+  '^': Object.freeze(['^']),
   "and": Object.freeze(["and"]),
   "or": Object.freeze(["or"]),
   "xor": Object.freeze(["xor"]),
@@ -10306,35 +10737,64 @@ const postProcessGroupPart = (state, gaps, nodes, groupTypeIfSingleNodeLeft) => 
         if (nodes.length === 1) {
           return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        // TODO try and deduplicate this and "return" expression
-        const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
-        switch (fromIndex) {
-          case null:
-            addError(state, nodes[1], {
-              message: \`Unexpected "\${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue from <loop label>).\`
+        const loopLabel = nodes[1];
+        if (loopLabel.type !== "identifier") {
+          addError(state, loopLabel, {
+            message: \`Expected identifier after "continue" but found "\${loopLabel.type}"\`
+          });
+          if (nodes.length > 2) {
+            multiAddError(state, nodes, 2, nodes.length, {
+              message: \`Unexpected node after "continue <loop-label>"\`
             });
-            return groupNodeUnsafe("continue_expression", gaps, nodes);
-          case (nodes.length - 1):
-            addError(state, nodes[fromIndex], {message: \`Expected identifier after "from"\`});
-            break;
-          default:
-            if (nodes[fromIndex + 1].type !== "identifier") {
-              addError(state, nodes[fromIndex + 1], {
-                message: \`Expected identifier after "from" but found "\${nodes[fromIndex + 1].type}"\`
-              });
-            }
-            if ((fromIndex + 2) < nodes.length) {
-              multiAddError(state, nodes, fromIndex + 2, nodes.length, {
-                message: \`Unexpected node after "from \${nodes[fromIndex + 1].text}"\`
-              });
-            }
+          }
+          return groupNodeUnsafe("continue_expression", gaps, nodes);
         }
-        if (fromIndex > 1) {
-          multiAddError(state, nodes, 1, fromIndex, {
-            message: \`Unexpected node between "continue" and "from"\`
+        if (nodes.length > 2) {
+          multiAddError(state, nodes, 2, nodes.length, {
+            message: \`Unexpected node after "continue \${loopLabel.text}"\`
           });
         }
         return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
+        // switch (nodes.length) {
+        //   case 1:
+        //   case 2: {
+        //   }
+        //   default:
+        //     multiAddError(state, nodes, 2, nodes.length, {
+        //       message: \`A continue expression must have either one node (continue) or two (continue <loop label>)\`,
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        // }
+        
+        // // TODO try and deduplicate this and "return" expression
+        // const fromIndex = findFirstKeywordIndex(nodes, "from", 1);
+        // switch (fromIndex) {
+        //   case null:
+        //     addError(state, nodes[1], {
+        //       message: \`Unexpected "\${nodes[1].type}" after "continue". A continue expression must be one of (continue) or (continue <loop label>).\`
+        //     });
+        //     return groupNodeUnsafe("continue_expression", gaps, nodes);
+        //   case (nodes.length - 1):
+        //     addError(state, nodes[fromIndex], {message: \`Expected identifier after "from"\`});
+        //     break;
+        //   default:
+        //     if (nodes[fromIndex + 1].type !== "identifier") {
+        //       addError(state, nodes[fromIndex + 1], {
+        //         message: \`Expected identifier after "from" but found "\${nodes[fromIndex + 1].type}"\`
+        //       });
+        //     }
+        //     if ((fromIndex + 2) < nodes.length) {
+        //       multiAddError(state, nodes, fromIndex + 2, nodes.length, {
+        //         message: \`Unexpected node after "from \${nodes[fromIndex + 1].text}"\`
+        //       });
+        //     }
+        // }
+        // if (fromIndex > 1) {
+        //   multiAddError(state, nodes, 1, fromIndex, {
+        //     message: \`Unexpected node between "continue" and "from"\`
+        //   });
+        // }
+        // return groupNodeUnsafe("continue_expression_with_label", gaps, nodes);
       }
       case "do": {
         for (let i = nodes.length - 1; i > 0; i--) {
@@ -10780,7 +11240,7 @@ const checkFirstOrLastNode = (state, beforeOrAfter, node) => {
 
 // @ts-check
 
-/** @import {DustGap, DustCommentNode, DustGapStringWithError} from "./types.d.ts" */
+/** @import {DustGap, DustCommentNode, DustGapStringWithError, EndToken, StartToken} from "./types.d.ts" */
 
 /**
  * 
@@ -10816,6 +11276,34 @@ const appendGapNode = (gap, node) => {
     return gap;
   }
   return [gap, node];
+};
+
+/**
+ * 
+ * @param {EndToken} endToken 
+ * @returns {StartToken}
+ */
+const expectedStartToken = (endToken) => {
+  switch (endToken) {
+    case ')':
+      return '(';
+    case ']':
+      return '[';
+    case '}':
+      return '{';
+    case '"':
+      return '"';
+    case '\\'':
+      return '\\'';
+    case '”':
+      return '“';
+    case '»':
+      return '«';
+    case '\\n':
+      return "//";
+    case "*/":
+      return "/*";
+  }
 };
 
 // @ts-check
@@ -10918,11 +11406,11 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       case '»':
       case "*/": {
         moveToNextToken(state, token);
-        gap = appendGapNode(gap, errorGapNode(state, token, {
-          message: endBracket
-            ? \`Found unmatched end token "\${token}" at \${positionString(state)} (expected "\${endBracket}" since the current group was opened with start token "\${startBracket}" at \${positionString(state)})\`
-            : \`Found unmatched end token "\${token}" at \${positionString(state)} (at root level)\`,
-        }));
+        let message = \`Found unmatched end token "\${token}" at \${positionString(state)} (missing "\${expectedStartToken(token)}"?)\`;
+        if (endBracket) {
+          message += \`: expected "\${endBracket}" since the current group was opened with start token "\${startBracket}" at \${positionString(state)}\`;
+        }
+        gap = appendGapNode(gap, errorGapNode(state, token, {message}));
         continue;
       }
       case '$':
@@ -11016,7 +11504,7 @@ const parseGroup = (groupTypeGuess, state, startBracket, endBracket) => {
       }
     }
     const errorNode = leafNode("identifier", token);
-    addError(state, errorNode, {message: \`Invalid token\`});
+    addError(state, errorNode, {message: \`Invalid token "\${token}"\`});
     gap = appendNode(gaps, gap, children, errorNode);
   }
   gaps.push(gap);
@@ -11133,8 +11621,15 @@ const parseCharacterLiteral = (state) => {
       length += token.length;
       continue;
     }
+    const character = state.text.slice(characterStart, state.index);
+    if (length === 0) {
+      const characterLiteral = groupNodeUnsafe("character_literal", ["''"], []);
+      checkCharacterLiteralLength(characterLiteral, length, state);
+      moveToNextToken(state, token);
+      return characterLiteral;
+    }
     const characterLiteral = groupNode("character_literal", CHARACTER_LITERAL_GAPS, [
-      (leafNode("character", state.text.slice(characterStart, state.index))),
+      leafNode("character", character),
     ]);
     checkCharacterLiteralLength(characterLiteral, length, state);
     moveToNextToken(state, token);
@@ -11595,7 +12090,7 @@ const SHADOW_ROOT_URL = URL.createObjectURL(new Blob([`<template shadowrootmode=
       overflow: hidden;
       contain: paint;
       --border-width: 2px;
-      --border-color: color-mix(in srgb, var(--code-color) 75%, transparent);
+      --border-color: color-mix(in srgb, var(--code-color) 50%, transparent);
       display: inline-grid;
       grid-template-columns: max-content 1fr;
       grid-template-rows: 1fr max-content;
@@ -11666,7 +12161,7 @@ const SHADOW_ROOT_URL = URL.createObjectURL(new Blob([`<template shadowrootmode=
     #undo-redo {
       box-sizing: border-box;
       padding: 2px;
-      border: 1px solid currentColor;
+      border: 1px solid var(--border-color);
       border-radius: 7px;
       cursor: default;
       flex-shrink: 0;
@@ -11729,7 +12224,10 @@ const SHADOW_ROOT_URL = URL.createObjectURL(new Blob([`<template shadowrootmode=
   </div>
   <div id="status-bar">
     <span id="selection-indicator">Line 1, Column 1</span>
-    <span id="run-status"><span title="Program run time will be measured here">00:00:00:000</span></span>
+    <span id="run-status" style="flex-shrink: 0;"><span title="Program run time will be measured here">00:00:00:000</span></span>
+    <!-- <span >
+      <span>hi</span>
+    </span> -->
   </div>
 </template>`], {type: "text/plain"}));
 
@@ -11749,16 +12247,21 @@ const __WORKER_TYPE__ = "classic";
 const verifier = new Worker(WORKER_VERIFIER_URL, { type: __WORKER_TYPE__ })
   ;
 
+// TODO rename to something like "hide-parse-errors" since it's only added if there are errors
 const EDITING_CLASS = "editing";
 
 /**
  * @param {InternalState} state
  * @param {string} text
- * @param {number} newCursorPosition
+ * @param {number} start
+ * @param {number} end
  */
-const setEditorText = (state, text, newCursorPosition) => {
-  if (!((0 <= newCursorPosition) && (newCursorPosition <= text.length))) {
-    throw new RangeError(`cursorPosition (${newCursorPosition}) out of bound of text of length ${text.length}`, { cause: { editor: state.editor, text } });
+const setEditorText = (state, text, start, end) => {
+  if (!((0 <= start) && (start <= text.length))) {
+    throw new RangeError(`start (${start}) out of bound of text of length ${text.length}`, { cause: { editor: state.editor, text } });
+  }
+  if (!((0 <= end) && (end <= text.length))) {
+    throw new RangeError(`end (${end}) out of bound of text of length ${text.length}`, { cause: { editor: state.editor, text } });
   }
   const range = state.selectedRange;
   state.history.length = state.historyIndex;
@@ -11767,7 +12270,8 @@ const setEditorText = (state, text, newCursorPosition) => {
   removeAttributeIfPresent(state.undoButton, "disabled");
   setAttributeIfChanged(state.redoButton, "disabled", "");
   /** @type {{text: string}} */(state).text = text;
-  range.start = range.end = newCursorPosition;
+  range.start = start;
+  range.end = end;
   queueUpdateContents(state);
 };
 
@@ -11795,25 +12299,26 @@ const updateContents = (state) => {
       maxWidthLine = lines[i];
     }
   }
-  performance.now();
-    const [errors, program] = parse(text);
-    performance.now();
-    const virtualSpans = dustNodeToVirtualHTML(program, errors);
-    performance.now();
-    const virtualOutlines = drawSVGs(lines, program, state);
-    performance.now();
-    const width = state.characterWidth * (maxWidthLine.length + 1),
+  const
+    parseProgramStart = performance.now(),
+    [errors, program] = parse(text),
+    parseProgramEnd = performance.now(),
+    virtualSpans = dustNodeToVirtualHTML(program, errors),
+    virtualSpansEnd = performance.now(),
+    virtualOutlines = drawSVGs(lines, program, state),
+    virtualShapesEnd = performance.now(),
+    width = state.characterWidth * (maxWidthLine.length + 1),
     height = state.lineHeight * lines.length,
     contentsStyle = state.contents.style;
   setPropertyIfChanged(contentsStyle, "--program-width", `${width}px`);
   setPropertyIfChanged(contentsStyle, "--program-height", `${height}px`);
   onProgramChangedOrRunRestarted(state);
-  updateLineNumbers(state.lineNumbers, state.contents, lines.length, state, state.onProgramLineNumberPointerDown);
-  performance.now();
+  updateLineNumbers(state.lineNumbers, state.contents, lines.length);
+  const updateLineNumbersEnd = performance.now();
   patchSpans(state.program, virtualSpans);
-  performance.now();
+  const updateProgramEnd = performance.now();
   patchOutlines(state.outlines, virtualOutlines, width, height);
-  performance.now();
+  const updateOutlinesEnd = performance.now();
 
   if (errors) {
     setAttributeIfChanged(state.runButton, "disabled", "");
@@ -11833,8 +12338,10 @@ const updateContents = (state) => {
     setAttributeIfChanged(state.runButton, "title", RUN_BUTTON_TITLE);
     removeAttributeIfPresent(state.playIcon, "fill");
   }
-  performance.now();
+  const drawSelectedRangeStart = performance.now();
   drawSelectedRange(state);
+  const onTextChangedStart = performance.now();
+  state.onTextChanged?.call(state.editor, text);
   const
     updateEnd = performance.now(),
     totalPerf = updateEnd - updateStart;
@@ -11850,7 +12357,31 @@ const updateContents = (state) => {
     return; // ignore the first fast update: it will always be slow
   }
   state.allUpdates.push(totalPerf);
-  state.allUpdates.toSorted((a, b) => a - b);
+  const allUpdates = state.allUpdates.toSorted((a, b) => a - b);
+  (console).warn(`PERFORMANCE (update):
+total:               ${totalPerf.toFixed(2)}ms
+total fast updates:  ${state.fastUpdates}
+total slow updates:  ${state.slowUpdates}
+slow update %:       ${(100 * state.slowUpdates / totalUpdates).toFixed(2)}%
+measure size:        ${(parseProgramStart - updateStart).toFixed(2)}ms
+parse program:       ${(parseProgramEnd - parseProgramStart).toFixed(2)}ms
+make virtual spans:  ${(virtualSpansEnd - parseProgramEnd).toFixed(2)}ms
+make virtual shapes: ${(virtualShapesEnd - virtualSpansEnd).toFixed(2)}ms
+update DOM:          ${(drawSelectedRangeStart - virtualShapesEnd).toFixed(2)}ms
+  line numbers:      ${(updateLineNumbersEnd - virtualShapesEnd).toFixed(2)}ms
+  program:           ${(updateProgramEnd - updateLineNumbersEnd).toFixed(2)}ms
+    number of spans: ${virtualSpans.length}
+  outlines:          ${(updateOutlinesEnd - updateProgramEnd).toFixed(2)}ms
+draw selected range: ${(onTextChangedStart - drawSelectedRangeStart).toFixed(2)}ms
+onTextChangedStart:  ${(updateEnd - onTextChangedStart).toFixed(2)}ms
+
+stats:
+  number of updates: ${allUpdates.length}
+  mean:              ${(allUpdates.reduce((a, b) => a + b) / allUpdates.length).toFixed(2)}ms
+  median:            ${allUpdates[Math.floor(allUpdates.length / 2)].toFixed(2)}ms
+  min:               ${allUpdates[0].toFixed(2)}ms
+  max:               ${allUpdates.at(-1)?.toFixed(2)}ms
+`);
 
   /*
   TODO
@@ -11897,7 +12428,7 @@ const removeEditingClass = (state) => {
  * @param {number} cursorPosition 
  * @returns {number}
  */
-const closestPrecedingNewLine = (text, cursorPosition) =>
+const closestNewLineBefore = (text, cursorPosition) =>
   (cursorPosition === 0) ? -1 : text.lastIndexOf('\n', cursorPosition - 1);
 
 /**
@@ -11907,7 +12438,7 @@ const closestPrecedingNewLine = (text, cursorPosition) =>
  * @returns {number}
  */
 const cursorColumn = (text, cursorPosition) =>
-  cursorPosition - closestPrecedingNewLine(text, cursorPosition) - 1;
+  cursorPosition - closestNewLineBefore(text, cursorPosition) - 1;
 
 /**
  * 
@@ -11974,7 +12505,7 @@ const setCursorPosition = (state, cursorPosition) => {
  */
 const setTextAndCursorPosition = (state, text, cursorPosition) => {
   state.rememberedColumn = cursorColumn(text, cursorPosition);
-  setEditorText(state, text, cursorPosition);
+  setEditorText(state, text, cursorPosition, cursorPosition);
 };
 
 /**
@@ -12019,6 +12550,16 @@ const selectWholeLine = (state, cursorPosition) => {
   );
 };
 
+
+/**
+ * @param {InternalState} state
+ * @returns {string}
+ */
+const getSelectedText = (state) => {
+  const {start, end} = state.selectedRange;
+  return state.text.slice(Math.min(start, end), Math.max(start, end));
+};
+
 /**
  * @param {InternalState} state 
  * @param {string} replacement
@@ -12055,7 +12596,7 @@ const setUpLocalStorage = (state, signal) => {
     drawSelectedRange(state);
   }
   if (savedScrollPosition) {
-    state.contents.scrollTo(savedScrollPosition);
+    state.contents.scroll(savedScrollPosition);
   }
 
   addEventListener("beforeunload", saveLocalStorageStateFn, { signal });
@@ -12124,18 +12665,22 @@ const updateStyle = (state) => {
     textMeasurementContext = state.textMeasurementContext,
     editor = state.editor,
     computedStyle = getComputedStyle(editor),
+    cursorWidth = parseFloatPx(computedStyle, "--cursor-width", null, editor),
     lineHeight = parseIntegerPx(computedStyle, "--line-height", null, editor),
     fontSize = parseIntegerPx(computedStyle, "font-size", null, editor),
     fontFamily = computedStyle.fontFamily,
     font = `${fontSize}px ${fontFamily}`;
+  if (cursorWidth === null) {
+    throw new Error(`"--cursor-width" not found`, {cause: editor});
+  }
   if (lineHeight === null) {
-    throw new Error(`"--line-height" not found`, {cause: {editor}});
+    throw new Error(`"--line-height" not found`, {cause: editor});
   }
   if (fontSize === null) {
-    throw new Error(`"font-size" not found`, {cause: {editor}});
+    throw new Error(`"font-size" not found`, {cause: editor});
   }
   if (fontFamily === "") {
-    throw new Error(`"font-family" not found`, {cause: {editor}});
+    throw new Error(`"font-family" not found`, {cause: editor});
   }
   if (textMeasurementContext.font !== font) {
     textMeasurementContext.font = font;
@@ -12151,6 +12696,7 @@ const updateStyle = (state) => {
   }
 
   const textMetrics = textMeasurementContext.measureText("0");
+  state.cursorWidth = cursorWidth;
   state.characterWidth = textMetrics.width;
   state.characterHeight = textMetrics.fontBoundingBoxAscent + textMetrics.fontBoundingBoxDescent;
   state.lineHeight = lineHeight;
@@ -12185,7 +12731,33 @@ const parseIntegerPx = (style, propertyName, defaultValue, element) => {
   return result;
 };
 
-const sheet = new CSSStyleSheet();sheet.replaceSync(":host {\n  --string-text-color: color-mix(in srgb, var(--code-color) 50%, orange);\n  --character-text-color: color-mix(in srgb, var(--code-color) 50%, rgb(255, 215, 0));\n  --outline-color-1: var(--code-color, currentcolor);\n\n  --cursor-width: 1px;\n  --cursor-blink-rate: 1.2s;\n  --selection-background-color: rgba(50, 50, 255, 0.5);\n\n  --line-hover-color: rgba(100, 100, 200, 0.25);\n\n  --grid-resizing-background-color: rgb(97, 97, 255);\n  --grid-resizer-width: 25px;\n\n  @media (any-pointer: fine) {\n      --grid-resizer-width: 10px;\n  }\n\n  /* The background color of a line when it's emphasized (e.g. when the user clicks on a result and the editor scrolls to the source code line, the source code line will briefly flash with this background color) */\n  --line-emphasis-background: green;\n}\n\n.grid-resizer {\n  touch-action: none;\n  box-sizing: border-box;\n\n  &:hover {\n    background-color: var(--grid-resizing-background-color);\n  }\n}\n\n/* TODO use :host:has(> .results) instead once FireFox and Safari support it */\n:host(.results-shown) {\n  --program-fr: 1fr;\n  grid-template-columns: max-content var(--program-fr) var(--grid-resizer-width) 1fr;\n\n  & .grid-resizer {\n    height: 100%;\n    border-inline: var(--border-width) solid var(--border-color);\n    cursor: ew-resize;\n  }\n}\n\n:host(.results-shown.horizontal-results-divider) {\n  --program-fr: 1fr;\n  grid-template-columns: max-content 1fr;\n  grid-template-rows: var(--program-fr) var(--grid-resizer-width) 1fr max-content;\n\n  & .grid-resizer {\n    grid-row: 2;\n    width: 100%;\n    border-inline: none;\n    border-block: var(--border-width) solid var(--border-color);\n    cursor: ns-resize;\n  }\n}\n\n.results {\n  white-space: pre;\n  position: relative;\n  overflow-y: auto;\n}\n\n:host(.results-shown.horizontal-results-divider)>.results {\n  grid-row: 3;\n}\n\n#toolbar,\n#status-bar,\n.line-numbers {\n  user-select: none;\n  -webkit-user-select: none;\n}\n\n#run-status {\n  flex-shrink: 0;\n  display: inline-flex;\n  gap: 0.75ch;\n  align-items: center;\n\n  &>svg {\n    width: 1.5ch;\n    height: 1.5ch;\n  }\n\n  &>button {\n    width: 1.5em;\n    height: 1em;\n\n    &>svg {\n      width: 100%;\n      height: 100%;\n      fill: currentColor;\n    }\n  }\n}\n\n.cursor,\n.highlighted-range {\n  white-space: pre;\n  position: absolute;\n  top: 0px;\n  box-sizing: border-box;\n  display: inline-block;\n  color: rgba(0, 0, 0, 0);\n  line-height: var(--line-height);\n  margin-inline-start: var(--line-count-margin);\n}\n\n.cursor {\n  border-inline-start: var(--cursor-width) solid var(--code-color);\n  animation: blink-cursor var(--cursor-blink-rate) step-end infinite;\n}\n\n.highlighted-range * {\n  background-color: var(--selection-background-color);\n}\n\n@keyframes blink-cursor {\n  0%,\n  100% {\n    opacity: 1;\n  }\n\n  50% {\n    opacity: 0;\n  }\n}\n\n#contents {\n  --program-width: 0px;\n  --program-height: 0px;\n\n  &:not(:focus-within)>.line-numbers {\n    opacity: 0.5;\n  }\n}\n\n.program-container,\n.outlines {\n  width: var(--program-width);\n  height: var(--program-height);\n}\n\n.program-container {\n  /* Ensures the program takes up all the available space so that click events go to it instead of accidentally going to the line number (e.g. if the user clicks to the right of the longest line, it should put the cursor at the end of that line, not select the whole line as if they had clicked that line's number) */\n  min-width: calc(100% - var(--line-count-margin));\n\n  &:focus {\n    outline: none;\n  }\n}\n\nbutton {\n  vertical-align: middle;\n\n  &:hover {\n    background-color: color-mix(in srgb, currentColor 30%, transparent);\n  }\n}\n\nbutton:active,\nbutton.action-performed {\n  background-color: color-mix(in srgb, currentColor 40%, transparent);\n}\n\n.line-numbers {\n  line-height: var(--line-height);\n  white-space: pre;\n  position: sticky;\n  left: 0;\n  height: var(--program-height);\n  cursor: pointer;\n\n  &>* {\n    outline: 0.25px solid color-mix(in srgb, currentColor 10%, transparent);\n    opacity: 0.5;\n    position: relative;\n  }\n\n  &>:hover {\n    background-color: var(--line-hover-color);\n    opacity: 1;\n    font-weight: bold;\n  }\n\n  &>.active {\n    opacity: 1;\n    font-weight: bold;\n  }\n\n  & svg {\n    width: 1.5ch;\n    height: 1.5ch;\n    position: absolute;\n    left: 0.25ch;\n\n    /* Put it slightly north of center so it looks more aligned with the numbers. */\n    top: calc((var(--line-height) - 1.5ch)/2 - 0.1ch);\n  }\n}\n\n.flash-line-background {\n  background-color: var(--line-emphasis-background);\n}\n\n.outlines {\n  position: absolute;\n  top: 0;\n  left: var(--line-count-margin);\n}\n\n.outlines * {\n  /* Adding the --outline-stroke variable as an indirection (rather than setting `style.stroke` directly) allows classes like \"function_call\" to override the `stroke` (e.g. to `none`) */\n  stroke: var(--outline-stroke);\n}\n\n.outlines rect,\n.outlines path {\n  fill: none;\n  stroke-width: 1;\n}\n\nrect.in_expression,\nrect.function_call {\n  fill: var(--function-call-background-color);\n  stroke: none;\n}\n\n\n.program-container {\n  /* border-inline-start: var(--border-width) solid var(--border-color); */\n  /* padding-inline-start: 0.5ch; */\n\n  box-sizing: border-box;\n  color: var(--code-color);\n  display: inline-block;\n  /* white-space: pre; */\n  cursor: text;\n  contain: paint;\n\n  & span:hover {\n      background-color: rgba(100, 100, 200, 0.25);\n  }\n}\n\n/* Elements use the [title] attribute to report errors */\n.program-container:not(.editing) [title] {\n    text-decoration-line: underline;\n    text-decoration-style: wavy;\n    text-decoration-color: red;\n    text-decoration-skip-ink: none;\n}\n\n.gap {\n    color: color-mix(in srgb, var(--code-color) 10%, transparent);\n}\n\n.integer_literal,\n.decimal_literal {\n    color: color-mix(in srgb, var(--code-color) 75%, blue);\n}\n\n.string,\n.fancy_string,\n.french_string {\n    color: color-mix(in srgb, var(--string-text-color) 50%, transparent);\n}\n\n.text {\n    color: var(--string-text-color);\n}\n\n.character_literal {\n    color: color-mix(in srgb, var(--character-text-color) 50%, transparent);\n}\n\n.character {\n    color: var(--character-text-color);\n}\n\n.keyword,\n.dollar_sign {\n    color: color-mix(in srgb, var(--code-color) 50%, red 50%);\n    font-weight: bold;\n}\n\n.operator {\n    color: color-mix(in srgb, var(--code-color) 50%, green 50%);\n    font-weight: bold;\n}\n\n.identifier_declaration {\n    font-style: italic;\n\n    &.identifier {\n        text-decoration: underline;\n    }\n}\n\n.function_called {\n    font-weight: bold;\n}\n\n.line_comment,\n.block_comment {\n    color: color-mix(in srgb, var(--code-color) 60%, transparent);\n    opacity: 0.60;\n}\n\n@keyframes spin {\n    0% {\n        transform: rotate(0deg);\n    }\n\n    100% {\n        transform: rotate(360deg);\n    }\n}\n\n.spinning {\n    display: inline-block;\n    animation: spin 2s linear infinite;\n}");
+/**
+ * @template DefaultValue
+ * @param {CSSStyleDeclaration} style
+ * @param {string} propertyName 
+ * @param {DefaultValue} defaultValue 
+ * @param {HTMLElement} element 
+ * @returns {number | DefaultValue}
+ */
+const parseFloatPx = (style, propertyName, defaultValue, element) => {
+  let valueString = style.getPropertyValue(propertyName);
+  if (valueString === "") {
+    return defaultValue; // Don't log a warning if the property is not defined.
+  }
+  if (!valueString.endsWith("px")) {
+    console.warn(`Ignoring "${propertyName}" because "${valueString}" doesn't end with "px"`, element);
+    return defaultValue;
+  }
+  valueString = valueString.slice(0, -2);
+  const result = parseFloatSafe(valueString);
+  if (isErr(result)) {
+    console.warn(`Ignoring "${propertyName}" because "${valueString}" is not a float`, element, errCause(result));
+    return defaultValue;
+  }
+  return result;
+};
+
+const sheet = new CSSStyleSheet();sheet.replaceSync(":host {\n  --string-text-color: color-mix(in srgb, var(--code-color) 50%, orange);\n  --character-text-color: color-mix(in srgb, var(--code-color) 50%, rgb(255, 215, 0));\n  --outline-color-1: var(--code-color, currentcolor);\n\n  --cursor-width: 1px;\n  --cursor-blink-rate: 1.2s;\n  --selection-background-color: rgba(50, 50, 255, 0.5);\n\n  --line-hover-color: rgba(100, 100, 200, 0.25);\n\n  --grid-resizing-background-color: rgb(97, 97, 255);\n  --grid-resizer-width: 25px;\n\n  @media (any-pointer: fine) {\n    --grid-resizer-width: 10px;\n  }\n\n  /* The background color of a line when it's emphasized (e.g. when the user clicks on a result and the editor scrolls to the source code line, the source code line will briefly flash with this background color) */\n  --line-emphasis-background: green;\n}\n\n.grid-resizer {\n  touch-action: none;\n  box-sizing: border-box;\n\n  &:hover {\n    background-color: var(--grid-resizing-background-color);\n  }\n}\n\n/* TODO use :host:has(> .results) instead once FireFox and Safari support it */\n:host(.results-shown) {\n  --program-fr: 1fr;\n  grid-template-columns: max-content var(--program-fr) var(--grid-resizer-width) 1fr;\n\n  & .grid-resizer {\n    height: 100%;\n    border-inline: var(--border-width) solid var(--border-color);\n    cursor: ew-resize;\n  }\n}\n\n:host(.results-shown.horizontal-results-divider) {\n  --program-fr: 1fr;\n  grid-template-columns: max-content 1fr;\n  grid-template-rows: var(--program-fr) var(--grid-resizer-width) 1fr max-content;\n\n  & .grid-resizer {\n    grid-row: 2;\n    width: 100%;\n    border-inline: none;\n    border-block: var(--border-width) solid var(--border-color);\n    cursor: ns-resize;\n  }\n}\n\n.results {\n  white-space: pre;\n  position: relative;\n  overflow-y: auto;\n}\n\n:host(.results-shown.horizontal-results-divider)>.results {\n  grid-row: 3;\n}\n\n#toolbar,\n#status-bar,\n.line-numbers {\n  user-select: none;\n  -webkit-user-select: none;\n}\n\n#run-status {\n  display: inline-flex;\n  gap: 0.75ch;\n  align-items: center;\n\n  &>svg {\n    width: 1.5ch;\n    height: 1.5ch;\n  }\n\n  &>button {\n    width: 1.5em;\n    height: 1em;\n\n    &>svg {\n      width: 100%;\n      height: 100%;\n      fill: currentColor;\n    }\n  }\n}\n\n.cursor,\n.highlighted-range {\n  white-space: pre;\n  position: absolute;\n  top: 0px;\n  box-sizing: border-box;\n  display: inline-block;\n  color: rgba(0, 0, 0, 0);\n  line-height: var(--line-height);\n  margin-inline-start: var(--line-count-margin);\n}\n\n.cursor {\n  border-inline-start: var(--cursor-width) solid var(--code-color);\n  animation: blink-cursor var(--cursor-blink-rate) step-end infinite;\n}\n\n.highlighted-range * {\n  background-color: var(--selection-background-color);\n}\n\n@keyframes blink-cursor {\n  0%,\n  100% {\n    opacity: 1;\n  }\n\n  50% {\n    opacity: 0;\n  }\n}\n\n#contents {\n  --program-width: 0px;\n  --program-height: 0px;\n\n  &:not(:focus-within)>.line-numbers {\n    opacity: 0.5;\n  }\n}\n\n.program-container,\n.outlines {\n  width: var(--program-width);\n  height: var(--program-height);\n}\n\n.program-container {\n  /* Ensures the program takes up all the available space so that click events go to it instead of accidentally going to the line number (e.g. if the user clicks to the right of the longest line, it should put the cursor at the end of that line, not select the whole line as if they had clicked that line's number) */\n  min-width: calc(100% - var(--line-count-margin));\n\n  &:focus {\n    outline: none;\n  }\n}\n\nbutton {\n  vertical-align: middle;\n\n  &:hover {\n    background-color: color-mix(in srgb, currentColor 30%, transparent);\n  }\n}\n\nbutton:active,\nbutton.action-performed {\n  background-color: color-mix(in srgb, currentColor 40%, transparent);\n}\n\n.line-numbers {\n  line-height: var(--line-height);\n  white-space: pre;\n  position: sticky;\n  left: 0;\n  height: var(--program-height);\n  cursor: pointer;\n\n  &>* {\n    outline: 0.25px solid color-mix(in srgb, currentColor 10%, transparent);\n    opacity: 0.5;\n    position: relative;\n  }\n\n  &>:hover {\n    background-color: var(--line-hover-color);\n    opacity: 1;\n    font-weight: bold;\n  }\n\n  &>.active {\n    opacity: 1;\n    font-weight: bold;\n  }\n\n  & svg {\n    width: 1.5ch;\n    height: 1.5ch;\n    position: absolute;\n    left: 0.25ch;\n\n    /* Put it slightly north of center so it looks more aligned with the numbers. */\n    top: calc((var(--line-height) - 1.5ch)/2 - 0.1ch);\n  }\n}\n\n.flash-line-background {\n  background-color: var(--line-emphasis-background);\n}\n\n.outlines {\n  position: absolute;\n  top: 0;\n  left: var(--line-count-margin);\n}\n\n.outlines * {\n  /* Adding the --outline-stroke variable as an indirection (rather than setting `style.stroke` directly) allows classes like \"function_call\" to override the `stroke` (e.g. to `none`) */\n  stroke: var(--outline-stroke);\n}\n\n.outlines rect,\n.outlines path {\n  fill: none;\n  stroke-width: 1;\n}\n\nrect.in_expression,\nrect.function_call {\n  fill: var(--function-call-background-color);\n  stroke: none;\n}\n\n\n.program-container {\n  /* border-inline-start: var(--border-width) solid var(--border-color); */\n  /* padding-inline-start: 0.5ch; */\n\n  box-sizing: border-box;\n  color: var(--code-color);\n  display: inline-block;\n  /* white-space: pre; */\n  cursor: text;\n  contain: paint;\n\n  & span:hover {\n    background-color: rgba(100, 100, 200, 0.25);\n  }\n}\n\n/* Elements use the [title] attribute to report errors */\n.program-container:not(.editing) [title] {\n  text-decoration-line: underline;\n  text-decoration-style: wavy;\n  text-decoration-color: red;\n  text-decoration-skip-ink: none;\n}\n\n.gap {\n  color: color-mix(in srgb, var(--code-color) 10%, transparent);\n}\n\n.integer_literal,\n.decimal_literal {\n  color: color-mix(in srgb, var(--code-color) 75%, blue);\n}\n\n.string,\n.fancy_string,\n.french_string {\n  color: color-mix(in srgb, var(--string-text-color) 50%, transparent);\n}\n\n.text {\n  color: var(--string-text-color);\n}\n\n.character_literal {\n  color: color-mix(in srgb, var(--character-text-color) 50%, transparent);\n}\n\n.character {\n  color: var(--character-text-color);\n}\n\n.keyword,\n.dollar_sign {\n  color: color-mix(in srgb, var(--code-color) 50%, red 50%);\n  font-weight: bold;\n}\n\n.operator {\n  color: color-mix(in srgb, var(--code-color) 50%, green 50%);\n  font-weight: bold;\n}\n\n.identifier_declaration {\n  font-style: italic;\n\n  &.identifier {\n    text-decoration: underline;\n  }\n}\n\n.function_called {\n  font-weight: bold;\n}\n\n.line_comment,\n.block_comment {\n  color: color-mix(in srgb, var(--code-color) 60%, transparent);\n  opacity: 0.60;\n}\n\n@keyframes spin {\n  0% {\n    transform: rotate(0deg);\n  }\n\n  100% {\n    transform: rotate(360deg);\n  }\n}\n\n.spinning {\n  display: inline-block;\n  animation: spin 2s linear infinite;\n}");
 
 // @ts-check
 
@@ -12252,28 +12824,6 @@ const keyboardClickListener = function(listener, event) {
 const markButtonActionPerformed =
   temporarilyAddClass.bind("action-performed", MILLISECONDS_PER_FRAME * 6);
 
-// (button) => {
-//   temporarilyAddClass(button, ACTION_PERFORMED);
-//   // const existingTimeoutID = markedButtonTimeoutIDs.get(button);
-//   // if (existingTimeoutID) {
-//   //   clearTimeout(existingTimeoutID);
-//   // } else {
-//   //   button.classList.add(ACTION_PERFORMED);
-//   // }
-//   // markedButtonTimeoutIDs.set(button, setTimeout(unmarkButton.bind(button), 16.67 * 6));
-// };
-
-// /** @this {HTMLElement} */
-// const unmarkButton = function() {
-//   this.classList.remove(ACTION_PERFORMED);
-//   markedButtonTimeoutIDs.delete(this);
-// };
-
-// const ACTION_PERFORMED = "action-performed"; // TODO inline!
-
-// /** @type {Map<HTMLElement, number>} */
-// const markedButtonTimeoutIDs = new Map();
-
 // @ts-check
 
 
@@ -12308,14 +12858,6 @@ const paste = function (event) {
   replaceSelectedRange(this, event.clipboardData.getData("text"));
 };
 
-/**
- * @param {InternalState} state
- * @returns {string}
- */
-const getSelectedText = (state) => {
-  const {start, end} = state.selectedRange;
-  return state.text.slice(Math.min(start, end), Math.max(start, end));
-};
 
 /**
  * @param {ClipboardEvent} event
@@ -12459,7 +13001,7 @@ const resizeUpDown = function (pointerId, event) {
  * @param {Readonly<{start: number, end: number, pointer: number}>} positions 
  */
 const setProgramFr = (state, {start, end, pointer}) => {
-  const fraction = Math.max(0.1, Math.min((pointer - start) / (end - start), 0.9));
+  const fraction = clamp(0.1, (pointer - start) / (end - start), 0.9);
   // The `results` cell is always `1fr`
   // --program-fr / (--program-fr + 1) = fraction
   // --program-fr = fraction * (--program-fr + 1)
@@ -12564,7 +13106,9 @@ const updateUndoRedoButtons = (toEnable, toDisable) => {
 
 const
   NON_WORD_CHARACTER = /[^\w_-]/,
-  NON_WHITESPACE_CHARACTER = /[^\s]/;
+  /** TODO should this use `\S`? */
+  NON_WHITESPACE_CHARACTER = /[^\s]/,
+  NON_WHITESPACE_CHARACTER_OR_END = /\S|$/;
 
 
 
@@ -12577,6 +13121,7 @@ const
  * @returns {number | T}
  */
 const indexOfRegex = (string, regex, start, defaultValue) => {
+  // TODO can this use https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/search ?
   for (let i = start; i < string.length; i++) {
     if (regex.test(string[i])) {
       return i;
@@ -12607,11 +13152,47 @@ const lastIndexOfRegex = (string, regex, start, defaultValue) => {
 
 /** @import { InternalState } from "./internal-state.mjs" */
 
+let tabKeyMovesFocus = false;
+
+/** @typedef {"changes-indentation" | "moves-focus"} TabKeyBehavior */
+/** @typedef {() => void} TabKeyBehaviorChangeListener */
+/** @type {Set<TabKeyBehaviorChangeListener>} */
+const tabKeyBehaviorChangeListeners = new Set();
+/**
+ * @param {InternalState} state
+ * @param {AbortSignal} signal 
+ */
+const setUpTabKeyBehaviorIndicator = (state, signal) => {
+  const
+    listener = updateTabKeyIndicator.bind(state),
+    listenerOptions = {signal};
+  updateTabKeyIndicator.call(state);
+  state.runStatus.before(state.tabKeyIndicator);
+  tabKeyBehaviorChangeListeners.add(listener);
+  signal.addEventListener("abort", tabKeyBehaviorChangeListeners.delete.bind(tabKeyBehaviorChangeListeners, listener));
+  state.program.addEventListener("focus", listener, listenerOptions);
+  state.program.addEventListener("blur", listener, listenerOptions);
+};
+
+
+/** @this {InternalState} */
+const updateTabKeyIndicator = function() {
+  if (this.shadowRoot.activeElement !== this.program) {
+    this.tabKeyIndicator.style.display = "none";
+    return;
+  }
+  this.tabKeyIndicator.style.removeProperty("display");
+  // TODO improve this: try to come up with some icons to shorten the length of the text so that the keyboard shortcut can fit there. Currently mouseless keyboard-only users have no way to discover the shortcut.
+  this.tabKeyIndicator.textContent =
+    `tab key ${tabKeyMovesFocus ? "moves focus" : "indents code"}`;
+};
+
 /**
  * @this {InternalState}
  * @param {KeyboardEvent} event 
  */
 const onKeyDown = function (event) {
+  console.log(`keydown "${event.key}" shift=${event.shiftKey} ctrl=${event.ctrlKey}`);
   const
     { selectedRange, text } = this,
     key = event.key;
@@ -12638,15 +13219,59 @@ const onKeyDown = function (event) {
     case "Meta":
     case "CapsLock":
       return;
-    case "Tab":
-      //       console.warn(`Handle "tab" key:
-      // - either use "tab" to indent (and call preventDefault()), or provide an alternative keyboard shortcut (e.g. ctrl+i), and teach users about it. Auto-formatter should make it rare to ever need to indent most things, but there will still be cases where it's needed
-      // - one option is to have a state where the editor captures almost everything: tab, ctrl+r, etc
-      //   - clicking on the text area enters that state
-      //   - tab-focusuing on the text area does not yet enter that state: that way, pressing "tab" again can move focus to the next focusable element.
-      //   - to enter the state with keyboard, press "Enter" after tab-focusing on the text area
-      //   - to exit the state, press "Escape" key`);
+    case "Tab": {
+      if (tabKeyMovesFocus) {
+        return;
+      }
+      event.preventDefault();
+      let
+        start = Math.min(selectedRange.start, selectedRange.end),
+        end = Math.max(selectedRange.start, selectedRange.end);
+      const
+        firstLineStart = closestNewLineBefore(text, start) + 1,
+        lastLineEnd = (text.indexOf('\n', end) + 1) || text.length,
+        lines = text.slice(firstLineStart, lastLineEnd).split('\n'),
+        /** TODO make configurable */
+        indentation = "  ";
+      let newText = text.slice(0, firstLineStart);
+      if (event.shiftKey) {
+        for (let i = 0; i < lines.length; i++) {
+          const
+            line = lines[i],
+            leadingSpaces = line.search(NON_WHITESPACE_CHARACTER_OR_END),
+            amountToSliceOff = Math.min(leadingSpaces, indentation.length);
+          if (i === 0) {
+            start -= amountToSliceOff;
+          } else {
+            newText += '\n';
+          }
+          end -= amountToSliceOff;
+          newText += line.slice(amountToSliceOff);
+        }
+      } else {
+        for (let i = 0; i < lines.length; i++) {
+          if (i !== 0) {
+            newText += '\n';
+          }
+          if (lines[i].length === 0) {
+            continue;
+          }
+          if (i === 0) {
+            start += indentation.length;
+          }
+          end += indentation.length;
+          newText += indentation;
+          newText += lines[i];
+        }
+      }
+      newText += text.slice(lastLineEnd);
+      if (selectedRange.start < selectedRange.end) {
+        setEditorText(this, newText, start, end);
+      } else {
+        setEditorText(this, newText, end, start);
+      }
       return;
+    }
     case "Escape":
       selectedRange.start = selectedRange.end;
       drawSelectedRange(this);
@@ -12661,7 +13286,7 @@ const onKeyDown = function (event) {
       return;
     case "ArrowUp": {
       event.preventDefault();
-      const prevLineEnd = closestPrecedingNewLine(text, selectedRange.end);
+      const prevLineEnd = closestNewLineBefore(text, selectedRange.end);
       if (prevLineEnd === -1) {
         updateSelectedRangeByOneLine(this, 0, event);
         return;
@@ -12738,6 +13363,13 @@ const onKeyDown = function (event) {
         event.preventDefault(); // ctrl+l usually selects the browser's url.
         break;
       }
+      case 'm': 
+        event.preventDefault();
+        tabKeyMovesFocus = !tabKeyMovesFocus;
+        for (const listener of tabKeyBehaviorChangeListeners) {
+          listener();
+        }
+        break;
       case 'f':
         console.warn(`TODO ctrl+f: built-in find+replace is slow for some reason`);
         break;
@@ -12750,6 +13382,36 @@ const onKeyDown = function (event) {
       case 'Z':
       case 'y':
         redo.call(this);
+        break;
+      case '"':
+        surroundSelectedRange(this, event, '“', '”');
+        break;
+      case '/':
+        console.warn(`TODO comment`);
+        let
+          start = Math.min(selectedRange.start, selectedRange.end),
+          end = Math.max(selectedRange.start, selectedRange.end);
+        const
+          /** TODO make configurable */
+          commentStart = "/*",
+          /** TODO make configurable */
+          commentEnd = "*/",
+          newText = text.slice(0, start) + commentStart + text.slice(start, end) + commentEnd + text.slice(end);
+        start += commentStart.length;
+        end += commentStart.length;
+        if (selectedRange.start < selectedRange.end) {
+          setEditorText(this, newText, start, end);
+        } else {
+          setEditorText(this, newText, end, start);
+        }
+        break;
+      case '?':
+        // TODO check if '?' is always above '/' in all layouts
+        if (!event.shiftKey) {
+          console.error(`This keyboard layout doesn't have the '?' above the '/': code needs fix`);
+        }
+        console.warn(`TODO uncomment`);
+        // TODO: a lot harder than commenting. May require language server to determine where the comment starts and ends.
         break;
     }
     // TODO eventually:
@@ -12772,7 +13434,7 @@ const onKeyDown = function (event) {
       if (end === text.length) {
         break;
       }
-      setEditorText(this, text.slice(0, end) + text.slice(end + 1), end);
+      setEditorText(this, text.slice(0, end) + text.slice(end + 1), end, end);
       break;
     }
     case "Enter":
@@ -12783,7 +13445,29 @@ const onKeyDown = function (event) {
       // E.g. on Chrome mobile (https://stackoverflow.com/questions/59584061/why-is-unidentified-returned-on-keyboard-input-on-mobile, https://stackoverflow.com/questions/36753548/keycode-on-android-is-always-229): the key should get handled by the "beforeinput" event.
       event.preventDefault();
       break;
+    case '(':
+      surroundSelectedRange(this, event, '(', ')');
+      break;
+    case '[':
+      surroundSelectedRange(this, event, '[', ']');
+      break;
+    case '{':
+      surroundSelectedRange(this, event, '{', '}');
+      break;
+    case "'":
+      surroundSelectedRange(this, event, "'", "'");
+      break;
+    case '"':
+      surroundSelectedRange(this, event, '"', '"');
+      break;
+    case '“':
+      surroundSelectedRange(this, event, '“', '”');
+      break;
+    case '«':
+      surroundSelectedRange(this, event, '«', '»');
+      break;
     default:
+      
       if (key.length !== 1) {
         console.error(`forgot to handle special key "${key}"`, event, this);
         break;
@@ -12876,13 +13560,13 @@ const updateSelectedRangeHorizontally = (state, amount, event) => {
     return;
   }
   if (event.shiftKey) {
-    setSelectedRange(state, range.start, Math.max(0, Math.min(range.end + amount, text.length)));
+    setSelectedRange(state, range.start, clamp(0, range.end + amount, text.length));
     drawSelectedRange(state);
     return;
   }
   let newPosition;
   if (range.start === range.end) {
-    newPosition = Math.max(0, Math.min(range.end + amount, text.length));
+    newPosition = clamp(0, range.end + amount, text.length);
   } else if (amount === 1) {
     newPosition = Math.max(range.start, range.end);
   } else {
@@ -12906,6 +13590,30 @@ const updateSelectedRangeByOneLine = (state, cursorPosition, event) => {
     range.start = range.end = cursorPosition;
   }
   drawSelectedRange(state);
+};
+
+/**
+ * 
+ * @param {InternalState} state 
+ * @param {Event} event 
+ * @param {string} before 
+ * @param {string} after 
+ */
+const surroundSelectedRange = (state, event, before, after) => {
+  event.preventDefault();
+  const
+    { text, selectedRange: {start, end} } = state,
+    lower = Math.min(start, end),
+    upper = Math.max(start, end),
+    shift = before.length;
+  state.rememberedColumn = cursorColumn(text, end + shift);
+  // TODO this is noticeably slow if the cursor is at the beginning of a file, probably because it results in new spans and/or svgs getting added at the front, so everything afterwards has to get updated. The update code should go from both ends to find the part that changed and needs new/updated nodes.
+  setEditorText(
+    state,
+    text.slice(0, lower) + before + text.slice(lower, upper) + after + text.slice(upper),
+    start + shift,
+    end + shift,
+  );
 };
 
 // @ts-check
@@ -12973,14 +13681,23 @@ const onProgramPointerDown = (state, event) => {
     // - But manually setting the native `Selection` then breaks other things, like it doesn't bring up the context menu or the selection expansion thingies
     return;
   }
-  state.program.focus({ preventScroll: true });
-
-  // IMPORTANT: without preventDefault, browsers will update the document Selection, causing issues like showing built-in text highlighting when clicking and dragging (we only want to show our custom highlight style). 
-  event.preventDefault();
+  console.log(`rect before`, state.program.getBoundingClientRect());
+  console.log(`before: ${findCursorPosition(state, event, state.program.getBoundingClientRect())}`);
 
   const
     pointerId = event.pointerId,
     cursorPosition = findCursorPosition(state, event, state.program.getBoundingClientRect());
+  console.log(`rect between`, state.program.getBoundingClientRect());
+  console.log(`between: ${cursorPosition}`);
+
+  console.warn(`TODO explain why focus is needed and why it MUST be calculated after the cursor position! Figure out why it affects the getBoundingClientRect!`);
+  state.program.focus({ preventScroll: true });
+  console.log(`rect after`, state.program.getBoundingClientRect());
+  console.log(`after: ${findCursorPosition(state, event, state.program.getBoundingClientRect())}`);
+
+  // IMPORTANT: without preventDefault, browsers will update the document Selection, causing issues like showing built-in text highlighting when clicking and dragging (we only want to show our custom highlight style). 
+  event.preventDefault();
+
   if (
     (state.pointerDownTime !== null) &&
     (pointerId === state.lastClickPointerId) &&
@@ -13144,14 +13861,6 @@ const startTimer = (node) => {
 /** @import { RunningState, RunStopReason, RunWorkerErrorMessage } from "./types.d.ts" */
 /** @import { WorkerRunnerMessage, WorkerRunnerResponse } from "./workers/types.d.ts" */
 
-/** @param {InternalState} state */
-const makeWorkerRunner = (state) => {
-  const worker = new Worker(WORKER_RUNNER_URL, { type: __WORKER_TYPE__ });
-  worker.onerror = onWorkerErrorEvent.bind(state, "Editor got an error from the worker thread");
-  worker.onmessageerror = onWorkerErrorEvent.bind(state, "Editor got a message-error from the worker thread");
-  return worker;
-};
-
 /**
  * 
  * @param {InternalState} state 
@@ -13166,17 +13875,32 @@ const runOrStop = (state, event) => {
     stop(state, state.runningState, "Program was stopped", stoppedIcon);
     return false;
   }
+  // TODO make running work even if the user lost network connection.
+  // - `import(WORKER_RUNNER_URL)` or `new Worker(WORKER_RUNNER_URL)` at page load time doesn't seem to work.
+  // - Need to either:
+  //   - Bundle all the worker code into a single string and replace WORKER_RUNNER_URL with a Blob URL
+  //     - pro: relatively simple
+  //     - con: can't share the parser code (uses more data -- but maybe gzip can help?)
+  //   - Bundle the parser separately and use a service worker:
+  //     - language bundle (parser, interpreter, virtual nodes) is independent and shared among all the threads:
+  //       main thread, runner thread, and verifier thread all have a bundle of their own code, and import the language bundle
+  //     - pro: more extensible, since other languages will be added later
+  //     - con: requires service worker to preload and cache things for offline use
   const
+    worker = new Worker(WORKER_RUNNER_URL, { type: __WORKER_TYPE__ }),
     stopper = makeSharedArrayBuffer(),
     startTimeNotification = `${new Date().toLocaleTimeString()}: program started`,
     timer = state.runStatus.lastChild;
-  state.workerRunner.onmessage = onWorkerResponse.bind(state, state.text);
-  state.workerRunner.postMessage(/** @satisfies {WorkerRunnerMessage} */({
+  worker.onerror = onWorkerErrorEvent.bind(state, "Editor got an error from the worker thread");
+  worker.onmessageerror = onWorkerErrorEvent.bind(state, "Editor got a message-error from the worker thread");
+  worker.onmessage = onWorkerResponse.bind(state, state.text);
+  worker.postMessage(/** @satisfies {WorkerRunnerMessage} */({
     fileName: state.editor.fileName,
     text: state.text,
     stopper,
   }));
   state.runningState = {
+    worker,
     stopper: stopper && new Uint8Array(stopper),
     stopTimer: startTimer(timer.firstChild),
   };
@@ -13187,7 +13911,7 @@ const runOrStop = (state, event) => {
   state.playIcon.replaceWith(state.stopIcon);
   onProgramChangedOrRunRestarted(state);
   showResults(state);
-  setResultsText(state, `// ${startTimeNotification}\n\n`);
+  setResultsText(state, `// ${startTimeNotification}\n`);
   return true;
 };
 
@@ -13200,25 +13924,14 @@ const runOrStop = (state, event) => {
  */
 const stop = (state, runningState, reason, stopIcon, sourceRow) => {
   const
-    { stopper, stopTimer } = runningState,
+    { worker, stopper, stopTimer } = runningState,
     notification = `${new Date().toLocaleTimeString()}: ${reason}`;
     state.runningState = null;
     stopTimer();
-  // TODO make stopping work even if stopper is `undefined`, or more importantly, if the language interpreter/runner doesn't support stopping.
-  // Using worker.terminate() works, but adds complexity because:
-  // - A new worker needs to be created on each run
-  // - If the user loses network connection, the worker can't be created, unless I either:
-  //   - Bundle all the worker code into a single string and replace WORKER_RUNNER_URL with a Blob URL
-  //     - pro: relatively simple
-  //     - con: can't share the parser code (uses more data -- but maybe gzip can help?)
-  //   - Bundle the parser separately and use a service worker:
-  //     - language bundle (parser, interpreter, virtual nodes) is independent and shared among all the threads:
-  //       main thread, runner thread, and verifier thread all have a bundle of their own code, and import the language bundle
-  //     - pro: more extensible, since other languages will be added later
-  //     - con: requires service worker to preload and cache things for offline use
   if (stopper) {
     stopper[0] = 1;
   }
+  worker.terminate();
   state.runStatus.lastChild.title = "Last program run time";
   stopIcon = stopIcon.cloneNode(true);
   if (sourceRow !== undefined) {
@@ -13240,9 +13953,9 @@ const stop = (state, runningState, reason, stopIcon, sourceRow) => {
   state.runButton.title = RUN_BUTTON_TITLE;
   state.stopIcon.replaceWith(state.playIcon);
   if (notification.includes('\n')) {
-    setResultsText(state, state.resultsText + `/*\n${notification}\n*/\n`);
+    setResultsText(state, state.resultsText + `/*\n${notification}\n*/`);
   } else {
-    setResultsText(state, state.resultsText + `// ${notification}\n`);
+    setResultsText(state, state.resultsText + `// ${notification}`);
   }
 };
 
@@ -13320,6 +14033,7 @@ const makeSharedArrayBuffer = () => {
 
 
 /** @import { HighlightedRange, HistoryEntry, LineNumbers, LocalStorageKeys, ResultsContainer, RunningState, RunStatus } from "./types.d.ts" */
+/** @import { TextElement } from "./html-types.d.ts" */
 /** @import { DustFileEditor } from "./dust-file-editor.mjs" */
 
 class InternalState {
@@ -13350,7 +14064,11 @@ class InternalState {
   /** @readonly @type {LineNumbers} */
   lineNumbers =
     // SAFETY: only `LineNumber` can ever be added as children of `lineNumbers`
-    /** @type {LineNumbers} */(html("div").set({ className: "line-numbers" }).build());
+    /** @type {LineNumbers} */(
+      html("div")
+        .set({ className: "line-numbers" })
+        .on("pointerdown", onProgramLineNumberPointerDown.bind(this))
+        .build());
   /** @readonly @type {HTMLElement} */
   program;
   /** @readonly */
@@ -13379,18 +14097,23 @@ class InternalState {
       .append(
         html("div")
           .set({ className: "line-numbers", tabIndex: -1 })
-          // .on("pointerdown", handleResultLineNumbersPointerDown.bind(this))
+          .on("pointerdown", onResultsLineNumberPointerDown.bind(this))
           .build(),
         svg({ class: "outlines" }),
         html("span").set({ className: "program-container" }).build(),
       )
-      // .on("pointerdown", handleResultsPointerDown.bind(this), {capture: true})
-      // .on("pointerenter", handleResultsPointerEnter.bind(this))
       .build()
   );
 
-  /** @readonly @type {Text} */
+  /** @readonly @type {TextElement} */
   selectionIndicator;
+  /** @readonly */
+  tabKeyIndicator = html("span")
+    .set({
+      style: "flex-shrink: 0;",
+      title: `The tab key either moves focus or indents (or de-indents with shift+tab) the selected lines of code.\nYou can toggle between these modes by pressing ${specialKeyName}+m.`,
+    })
+    .build();
   /** @readonly @type {RunStatus} */
   runStatus;
 
@@ -13401,6 +14124,7 @@ class InternalState {
 
   /** @readonly @type {OffscreenCanvasRenderingContext2D} */
   textMeasurementContext;
+  cursorWidth = 0;
   characterWidth = 0;
   characterHeight = 0;
   lineHeight = 0;
@@ -13414,6 +14138,8 @@ class InternalState {
 
   /** @type {string} */
   text;
+  /** @type {((this: DustFileEditor, text: string) => void) | undefined} */
+  onTextChanged;
   /** @readonly */
   selectedRange = {
     start: 0,
@@ -13439,12 +14165,8 @@ class InternalState {
   /** @type {number | null} */
   longPressTimoutID = null;
 
-  workerRunner = makeWorkerRunner(this);
   /** @type {RunningState | null} */
   runningState = null;
-
-  /** TODO figure out a better way to break the circular dependency */
-  onProgramLineNumberPointerDown = onProgramLineNumberPointerDown;
 
   /* End PROGRAM STATE */
 
@@ -13547,7 +14269,7 @@ class InternalState {
       settingsButton.title = SETTINGS_BUTTON_TITLE;
       settingsButton.append(settingsIcon.cloneNode(true));
     }
-    
+
     this.contents = cast(this.shadowRoot.getElementById("contents"), HTMLElement);
     this.contents.tabIndex = -1; // TODO explain
     this.contents.addEventListener("contextmenu", (event) => {
@@ -13561,10 +14283,9 @@ class InternalState {
     this.program = cast(this.contents.querySelector(".program-container"), HTMLElement);
     this.program.tabIndex = 0;
     this.program.addEventListener("pointerdown", onProgramPointerDown.bind(null, this));
-    // console.warn("TODO capture should not be necessary");
     
     { // status bar      
-      this.selectionIndicator = castAsTextElement(this.shadowRoot.getElementById("selection-indicator")).firstChild;
+      this.selectionIndicator = castAsTextElement(this.shadowRoot.getElementById("selection-indicator"));
 
       // SAFETY: assertion on its `lastChild` below ensures this is safe.
       this.runStatus = /** @type {RunStatus} */(
@@ -13585,7 +14306,7 @@ class InternalState {
       this.isMobile = detectDeviceType(this.localStorageKeys.deviceMode, editor) === "mobile";
     }
 
-    // IMPORTANT: add the "keydown" listener to `editor` instead of `contents` so that keyboard shortcuts for undo/redo work even when a toolbar button is focused.
+    // IMPORTANT: add the "keydown" listener to `editor` instead of `program` so that keyboard shortcuts for undo/redo work even when a toolbar button is focused.
     editor.addEventListener("keydown", onKeyDown.bind(this), { capture: true });
     if (this.isMobile) {
       editor.addEventListener("beforeinput", onBeforeInputOnMobile.bind(this));
@@ -13593,12 +14314,22 @@ class InternalState {
       // TODO test on mobile
       // Without this:
       // - A user might click outside of the editor and drag to select text within the editor, which uses the browser's native Selection.
-      // - If they then focus on the editor, it won't clear the native Selection, so it will continue to be shown at the same time as the editor's virtual selection.
+      // - If they then focus on the editor, it won't clear the native Selection, which means:
+      //   - Events like "copy", "cut", and "paste" might not get sent to the editor.
+      //   - The native Selection will continue to be shown at the same time as the editor's virtual selection.
       const selection = document.getSelection();
       if (selection) {
-        editor.addEventListener("focus", selection.setPosition.bind(selection, this.program, 0));
+        const setNativeSelection = selection.setPosition.bind(selection, this.program, 0);
+        // IMPORTANT! Must add the listener to both `program` and `editor` because:
+        // - If I select text within the `results` (uses native selection) and then click on the `program`, the `editor` does not get the "focus" event
+        // - If I select text outside the editor and then tab-focus onto the editor's toolbar, the `program` does not get the "focus" event
+        this.program.addEventListener("focus", setNativeSelection);
+        editor.addEventListener("focus", setNativeSelection);
       }
     }
+
+    editor.addEventListener("focus", drawSelectedRange.bind(null, this));
+    editor.addEventListener("blur", this.cursor.remove.bind(this.cursor));
 
     setUpGridResizer(this);
     new ResizeObserver(updateResultsDividerOrientation.bind(this)).observe(editor);
@@ -13704,8 +14435,29 @@ const fullScreenElement = (root) => root.fullscreenElement ?? root.webkitFullscr
 
 /** @import { InternalHTMLElements } from "./types.d.ts" */
 
+// TODO this is broken! Should be able to replace `(return n from outer)` with `(continue outer-loop)` but that causes infinite loop.
+// Maybe a scope issue? Is it creating a new scope object each time, so n doesn't get changed in the outer scope?
+//        then (return n from outer)
+// ( do $outer
+//   (.log "starting outer")
+//   (var $n = 0)
+//   (.log "n = {n}")
+//   ( while n <= 100 do $outer-loop
+//     (.log "outer loop: n = {n}")
+//     ( while n <= 10 do
+//       (.log "inner loop: n = {n}")
+//       ( set n = n + 1 )
+//       (.log "inner loop after set: n = {n}")
+//       ( if (n == 3)
+//         then (continue outer-loop) )
+//       (.log "inner loop after if: n = {n}") )
+//     ( set n = n + 1 )                         ) )
+
 console.warn(`TODO
 - selections:
+  - IMPORTANT: native find, if it scrolls the program, breaks pointer down: instead of putting the cursor where I expect, it puts it relative to where the program was before scrolling.
+    - possibly "focus" event gets sent before "pointerdown" event?
+  - On mobile: tapping play or any toolbar icon while virtual keyboard is hidden should not bring up the virtual keyboard, but it does
   - ctrl+left/right arrow should move the cursor by one word
   - shift+ctrl+left/right arrow should update the selection by one word
   - ctrl+up/down arrow should scroll the page up/down by one line
@@ -13715,6 +14467,7 @@ console.warn(`TODO
   - Shift+click should select the range between the current cursor position and the new one
   - measure time between key event and result getting drawn on screen, and report warnings if it's slow.
   - on mobile, contenteditable doesn't let the cursor go onto the last line 
+  - on mobile, long-press, select all, then cut/copy/paste doesn't work
 
 - parser
   - add parse errors for invalid things before '=' or ':':
@@ -13731,15 +14484,18 @@ console.warn(`TODO
     - (or both)
 
 - perf
-  - "scrollIntoView" forces reflow and gives perf warnings: calculate and scroll manually, or at least don't call scrollIntoView if it's not needed.
-    - Without "scrollIntoView", the majority of updates are below 15ms
   - don't generate <span> elements for gaps that are just whitespace, just add Text Nodes
 
 -appearance
+  - records and arrays need to not draw outlines when the height gets small enough. These examples look very wrong:
+    - {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    - [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+  - moving the results divider shouldn't change the size of the editor element, but does (unless size is explicitly set), which can cause horrible jank as the page's scroll position changes
   - fix function identifier declarations not being bold: their class name is "identifier_declaration identifier" -- it needs "function_called" also
   - could the line numbers be moved into the top-level grid? If so it would fix the issue of text scrolling under the line numbers
   - flashing of line background color when clicking on a result/program line, and when the other side doesn't need to scroll, works on desktop but not mobile
-  - PWA on mobile: bottom is cut off (sometimes, not always??) when not full screen (need some alternate CSS units for vh) 
+  - PWA on mobile: bottom is cut off (sometimes, not always??) when not full screen (need some alternate CSS units for vh)
+  - for long-running operations, it would be nice to show a spinner icon on the line that's currently executing.
 
 - replace things like "\\lambda" with 'λ', <= to ≤, etc, and add newline if text doesn't end with newline.
   - replacer code needs to update cursors/selections
@@ -13842,7 +14598,11 @@ class DustFileEditor extends HTMLElement {
       .addEventListener("change", this.update.bind(this), { signal });
 
     setUpFullScreenButton(state, signal);
-    setUpSelectionOnMobile(state, signal);
+    if (state.isMobile) {
+      setUpSelectionOnMobile(state, signal);
+    } else {
+      setUpTabKeyBehaviorIndicator(state, signal);
+    }
     updateStyle(state);
     updateContents(state);
     if (toFocus === undefined) {
@@ -13867,6 +14627,19 @@ class DustFileEditor extends HTMLElement {
   update() {
     updateStyle(this.#state);
     queueUpdateContents(this.#state);
+  }
+
+  /**
+   * @param {string} text 
+   */
+  setText(text) {
+    const cursorPosition = Math.min(this.#state.selectedRange.end, text.length);
+    setEditorText(this.#state, text, cursorPosition, cursorPosition);
+  }
+
+  /** @param {InternalState["onTextChanged"]} onTextChanged */
+  setTextChangeListener(onTextChanged) {
+    this.#state.onTextChanged = onTextChanged;
   }
 }
 
